@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import brain
 
 APP_NAME = "Desk Buddy"
-VERSION = "2.4"
+VERSION = "2.4.1"
 PORT = int(os.environ.get("DESKBUDDY_PORT", 8765))
 HTTPS_PORT = PORT + 1     # the secure link, needed for the phone's motion sensors and microphone
 FPS = 15                  # how often the phone gets cursor updates
@@ -206,7 +206,7 @@ stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0,
          "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0, "backspaces": 0,
          "beat": None, "mediaKind": None, "activity": None, "day": None, "typing": 0, "busy": False, "online": True,
          "pcBattery": None, "clip": None, "volume": None, "fullscreen": False, "cmd": None, "profile": None,
-         "life": None, "heart": None, "catchup": None, "links": [], "elsewhere": None}
+         "life": None, "heart": None, "catchup": None, "links": []}
 
 
 # ---------- saved files, and the people who use this PC ----------
@@ -1016,6 +1016,8 @@ def stats_loop():
         if idle > SESSION_RESET_IDLE:
             work_session["start"] = time.time()
         if idle < 60:   # you're here: that's time spent together
+            if idle < 2 and time.time() - last_here["at"] > 5:
+                hello_now.set()   # back at this PC: let your other PCs (and the phone) know at once
             last_here["at"] = time.time()
             note_active_day()
             active += 1
@@ -1042,7 +1044,6 @@ def stats_loop():
         screen["fullscreen"] = full
         stats["activity"], stats["fullscreen"] = tracker.now(now), full and key == "gaming"
         feel(now, idle < 60 or playing == "movie", key, media)
-        stats["elsewhere"] = elsewhere()
         if int(now) % 15 == 0 or stats["day"] is None:
             day = tracker.summary()
             stats["day"] = {k: day[k] for k in ("activeMin", "productiveMin", "breakdown", "first", "usualStart", "usualEnd",
@@ -1584,8 +1585,9 @@ def lan_sync_loop():
         now = time.time()
         key, group = sync_keys()
         on = key and (config.get("sync") or {}).get("lan", True)
-        if on and now > next_hello:
+        if on and (now > next_hello or hello_now.is_set()):
             next_hello = now + 20
+            hello_now.clear()
             hello = json.dumps({"app": "deskbuddy", "g": group, "pc": PC_ID, "name": PC_NAME, "port": PORT,
                                 "active": last_here["at"]}).encode()
             targets = {"255.255.255.255"} | {str(ipaddress.ip_network(l["net"]).broadcast_address) for l in links if not l["public"]}
@@ -1608,14 +1610,63 @@ def lan_sync_loop():
             threading.Thread(target=sync_with_peer, args=(peer,), daemon=True).start()
 
 
-def elsewhere():
-    """You've moved to another of your PCs on this network: the phone can follow you there."""
-    if stats["idle"] < 30:
-        return None
-    now = time.time()
-    best = max((p for p in sync_state["peers"].values() if now - p.get("seen", 0) < 60 and p.get("active", 0) > last_here["at"] + 5),
-               key=lambda p: p["active"], default=None)
-    return {"ip": best["ip"], "name": best["name"]} if best else None
+# ---------- the phone follows you to your other PC (it stays connected here; this PC relays) ----------
+# When you move to another of your PCs on this network, this PC passes that PC's live feed on to the
+# phone, and passes your pets, sounds and taps back. The phone never changes address, so nothing to
+# reconnect, no certificate to accept again. Touch this PC and it switches back at once.
+
+relay = {"peer": None, "msg": None, "at": 0.0, "gen": 0}
+hello_now = threading.Event()   # you just came back to this PC: tell the others right away
+
+
+def follow_target(now):
+    s = config.get("sync") or {}
+    if not sync_state["key"] or not s.get("follow", True) or stats["idle"] < 3:
+        return None   # pinned here, not syncing, or you're using this PC
+    best, best_act = None, last_here["at"] + 2
+    for p in list(sync_state["peers"].values()):
+        if now - p.get("seen", 0) > 60 or now - p.get("failAt", 0) < 60:
+            continue
+        act = p.get("active", 0)
+        if p is relay["peer"] and relay["msg"] and now - relay["at"] < 5:
+            act = max(act, now - relay["msg"].get("idle", 0))   # live from its feed
+        if act > best_act:
+            best, best_act = p, act
+    if best is not None and (stats["idle"] >= 8 or best is relay["peer"]):
+        return best
+    return None
+
+
+def relay_reader(peer, gen):
+    try:
+        req = urllib.request.Request(f"http://{peer['ip']}:{peer['port']}/events?relay=1")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            for line in r:
+                if relay["gen"] != gen:
+                    return
+                if line.startswith(b"data: "):
+                    relay["msg"], relay["at"] = json.loads(line[6:]), time.time()
+    except Exception:
+        pass
+    if relay["gen"] == gen:   # couldn't reach it: stay here for a minute
+        peer["failAt"] = time.time()
+        relay.update(peer=None, msg=None, gen=gen + 1)
+
+
+def relay_loop():
+    while True:
+        target = follow_target(time.time()) if phones else None
+        if target is not relay["peer"]:
+            relay.update(peer=target, msg=None, gen=relay["gen"] + 1)
+            if target:
+                threading.Thread(target=relay_reader, args=(target, relay["gen"]), daemon=True).start()
+        time.sleep(0.3)
+
+
+def relayed():
+    """The other PC's latest frame, if the phone is following you there right now."""
+    p = relay["peer"]
+    return relay["msg"] if p and relay["msg"] and time.time() - relay["at"] < 3 else None
 
 
 def sync_status():
@@ -1624,7 +1675,8 @@ def sync_status():
     peers = [{"name": p["name"], "via": "same network", "ago": round(now - p.get("synced", 0)) if p.get("synced") else None}
              for p in sync_state["peers"].values() if now - p.get("seen", 0) < 120]
     peers += [{"name": p["name"], "via": "synced folder", "ago": round(now - p["at"])} for p in sync_state["folderPeers"].values()]
-    return {"on": bool(key), "lan": s.get("lan", True), "folder": s.get("folder", ""), "peers": peers, "error": sync_state["error"],
+    return {"on": bool(key), "lan": s.get("lan", True), "follow": s.get("follow", True), "folder": s.get("folder", ""), "peers": peers, "error": sync_state["error"],
+            "following": relay["peer"]["name"] if relayed() else None,
             "folderAt": sync_state["folderAt"], "pcName": PC_NAME}
 
 
@@ -1648,6 +1700,9 @@ def api_sync(data):
     elif action == "lan":
         s["lan"] = bool(data.get("on"))
         msg = "Saved"
+    elif action == "follow":
+        s["follow"] = bool(data.get("on"))
+        msg = "The phone follows you to your other PCs" if s["follow"] else "The phone stays with this PC"
     elif action == "stop":
         config["sync"] = {}
         sync_state.update(peers={}, folderPeers={})
@@ -1897,10 +1952,10 @@ tray = None
 _last_notice = 0.0
 
 
-def phone_connected(delta):
+def phone_connected(delta, notify=True):
     global phones, _last_notice
     phones += delta
-    if delta > 0 and phones == 1 and tray and time.time() - _last_notice > 60:
+    if notify and delta > 0 and phones == 1 and tray and time.time() - _last_notice > 60:
         _last_notice = time.time()
         try:
             tray.notify("Your phone is connected 🤖", APP_NAME)
@@ -1968,6 +2023,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(403)
         limit = 4_000_000 if path == "/sync" else 20000
         body = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), limit)).decode("utf-8", "replace")
+        if path in ("/bond", "/sound", "/work-reset", "/media-correct") and relayed() and self.forward(path, body):
+            return
         if path == "/sync":   # another of your PCs, with the same sync code
             key, _ = sync_keys()
             try:
@@ -2036,11 +2093,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
-        phone_connected(+1)
+        from_peer = "relay=1" in self.path   # another of your PCs passing this on to the phone: never relay back
+        phone_connected(+1, notify=not from_peer)
         try:
             while True:
-                x, y = cursor_position()
-                msg = dict(stats, x=round(x, 3), y=round(y, 3), now=int(time.time() * 1000))   # "now": lets the phone line up with the beat
+                other = None if from_peer else relayed()
+                if other:   # you're on your other PC: show the phone that one
+                    msg = dict(other, via=relay["peer"]["name"], links=stats["links"], profile=stats["profile"])
+                else:
+                    x, y = cursor_position()
+                    msg = dict(stats, x=round(x, 3), y=round(y, 3), now=int(time.time() * 1000), via=None)   # "now": lets the phone line up with the beat
                 self.wfile.write(f"data: {json.dumps(msg)}\n\n".encode())
                 self.wfile.flush()
                 time.sleep(1 / FPS)
@@ -2048,6 +2110,18 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             phone_connected(-1)
+
+    def forward(self, path, body):
+        """The phone is following you on another PC: hand its pet / sound / tap to that PC."""
+        p = relay["peer"]
+        try:
+            req = urllib.request.Request(f"http://{p['ip']}:{p['port']}{path}", data=body.encode(), method="POST")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data, kind = r.read(), r.headers.get("Content-Type", "application/json")
+        except Exception:
+            return False
+        self.send_body(kind, data, cache=False)
+        return True
 
     def log_message(self, *args):
         pass
@@ -2252,7 +2326,7 @@ def run_app(args):
         "/icon-192.png": ("image/png", png_bytes(robot_image(192))),
         "/icon-512.png": ("image/png", png_bytes(robot_image(512))),
     }
-    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, life_loop, links_loop, sync_loop, lan_sync_loop, start_secure_server):
+    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, life_loop, links_loop, sync_loop, lan_sync_loop, relay_loop, start_secure_server):
         threading.Thread(target=loop, daemon=True).start()
     start_mini_buddy()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)

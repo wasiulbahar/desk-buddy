@@ -460,6 +460,8 @@
         <h2>How your PCs share</h2>
         <div class="toggle"><div><h3>📶 Same network</h3><p>PCs on the same Wi-Fi or office network find each other and swap directly.</p></div>
           <label class="switch"><input type="checkbox" id="syncLan"><span></span></label></div>
+        <div class="toggle"><div><h3>📱 The phone follows me</h3><p>Move to your other PC and the phone shows that one, then comes back when you do. Turn off to keep the phone on this PC (handy when someone else uses the other PC).</p></div>
+          <label class="switch"><input type="checkbox" id="syncFollow"><span></span></label></div>
         <div class="toggle"><div><h3>☁️ Synced folder</h3><p>For PCs in different places: Google Drive, OneDrive or Dropbox carries an encrypted file between them. Pick the same kind of folder on every PC.</p></div></div>
         <div class="row" style="margin-top:8px"><select id="syncFolder" class="sel" style="max-width:420px"></select>
           <input type="text" id="syncPath" placeholder="Paste a folder path" style="max-width:320px;display:none"><button class="btn" id="saveFolder">Save</button></div>
@@ -983,11 +985,12 @@ function renderSync() {
   $('#syncOff').style.display = y.on ? 'none' : ''; $('#syncOn').style.display = y.on ? '' : 'none';
   if (!y.on) return;
   $('#syncCode').textContent = S.syncCode || '…';
-  $('#syncLan').checked = y.lan;
+  $('#syncLan').checked = y.lan; $('#syncFollow').checked = y.follow;
   const ago = s => s == null ? 'not yet' : s < 90 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
   $('#syncPeers').innerHTML = y.error ? esc(y.error) : y.peers.length
     ? y.peers.map(p => `✓ <b>${esc(p.name)}</b> (${p.via}, synced ${ago(p.ago)})`).join('<br>')
     : `Looking for your other PCs… (this one is <b>${esc(y.pcName)}</b>)`;
+  if (y.following) $('#syncPeers').innerHTML += `<br>📱 The phone is following you on <b>${esc(y.following)}</b>`;
   $('#syncPeers').className = 'status' + (y.peers.length ? ' ok' : '');
   const key = JSON.stringify([S.folders, y.folder]);
   if (key !== foldersShown && document.activeElement !== $('#syncFolder')) {
@@ -1003,6 +1006,7 @@ $('#syncStart').addEventListener('click', async () => { await api('sync', { acti
 $('#syncJoin').addEventListener('click', async () => { const r = await api('sync', { action: 'join', code: $('#joinCode').value }); if (r.ok) { $('#joinCode').value = ''; load(); } });
 $('#syncStop').addEventListener('click', async () => { if (confirm('Stop syncing on this PC? Your buddy stays as it is now.')) { await api('sync', { action: 'stop' }); load(); } });
 $('#syncLan').addEventListener('change', e => api('sync', { action: 'lan', on: e.target.checked }));
+$('#syncFollow').addEventListener('change', e => api('sync', { action: 'follow', on: e.target.checked }));
 $('#syncFolder').addEventListener('change', e => { $('#syncPath').style.display = e.target.value === 'custom' ? '' : 'none'; });
 $('#saveFolder').addEventListener('click', async () => {
   const v = $('#syncFolder').value, path = v === 'custom' ? $('#syncPath').value : v;

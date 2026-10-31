@@ -552,7 +552,7 @@ if (DEMO) {
   // The PC can be reached several ways: Wi-Fi, or the phone's USB / Bluetooth tethering. It tells us all
   // its addresses; if the one we're using goes quiet, try the next, so pulling the cable or leaving Wi-Fi just works.
   const savedLinks = () => { try { return JSON.parse(localStorage.getItem('deskbuddy.links') || '[]'); } catch (e) { return []; } };
-  let stream = null, tryAt = 0, linkIndex = 0;
+  let stream = null, tryAt = 0, linkIndex = 0, following = null;
   const connect = () => {
     if (stream) stream.close();
     stream = new EventSource(PC('events'));
@@ -560,10 +560,10 @@ if (DEMO) {
       const s = JSON.parse(e.data);
       if (s.links && s.links.length && rateOk('links', 30000)) try { localStorage.setItem('deskbuddy.links', JSON.stringify(s.links)); } catch (err) {}
       onState(s);
-      if (s.elsewhere && rateOk('follow', 20000)) {   // you moved to your other PC: follow you there
-        const port = location.port ? ':' + location.port : '';
-        pcBase = s.elsewhere.ip === location.hostname ? '' : `${location.protocol}//${s.elsewhere.ip}${port}/`;
-        say(`Following you to ${esc(s.elsewhere.name)} 👀`, 2500, 'happy'); tryAt = performance.now(); connect();
+      if ((s.via || null) !== following) {   // you moved to your other PC (this PC passes its feed on)
+        if (s.via) { QUIRKS.wave(); say(`Following you to <b>${esc(s.via)}</b> 👀`, 2500, false); }
+        else if (following) say('Back on this PC 👋', 2000, false);
+        following = s.via || null;
       }
     };
   };
