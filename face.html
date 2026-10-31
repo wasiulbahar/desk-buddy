@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Desk Buddy">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Desk Buddy</title>
+<style>
+  :root { --eye: rgb(90,240,255); }
+  html, body {
+    margin: 0; height: 100%; background: #000; overflow: hidden;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--eye);
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; transition: filter 1s; }
+  #bubble {
+    position: fixed; left: 50%; top: max(5%, env(safe-area-inset-top));
+    transform: translate(-50%, -16px); opacity: 0; transition: opacity .35s, transform .35s;
+    background: rgba(15, 30, 40, .9); border: 1px solid currentColor; border-radius: 20px;
+    padding: 10px 20px; font-size: clamp(14px, 3.8vmin, 28px); line-height: 1.35;
+    max-width: 82vw; text-align: center; pointer-events: none; white-space: nowrap;
+  }
+  #bubble small { opacity: .6; font-size: .7em; }
+  #bubble.show { opacity: 1; transform: translate(-50%, 0); }
+  #hud {
+    position: fixed; left: 0; right: 0; bottom: max(10px, env(safe-area-inset-bottom));
+    display: flex; justify-content: center; gap: 22px; opacity: .4; pointer-events: none;
+    font-size: clamp(11px, 2.6vmin, 17px); font-variant-numeric: tabular-nums;
+  }
+  .bar { display: inline-block; width: 52px; height: 6px; margin-left: 6px; vertical-align: middle;
+         background: rgba(255,255,255,.12); border-radius: 3px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--eye); transition: width .8s; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="bubble"></div>
+<div id="hud">
+  <span id="clock">--:--</span>
+  <span>CPU<span class="bar"><i id="cpu"></i></span></span>
+  <span>RAM<span class="bar"><i id="ram"></i></span></span>
+  <span id="work">⏱ 0m</span>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const params = new URLSearchParams(location.search);
+const BREAK_MIN = +params.get('break') || 50;   // add ?break=25 to the URL to change it
+
+// Window titles that change how the robot feels.
+const FUN_RE = /youtube|netflix|twitch|reddit|instagram|tiktok|facebook|prime video|disney\+|9gag/i;
+const WORK_RE = /visual studio|vs ?code|pycharm|intellij|android studio|sublime|notepad\+\+|vim|terminal|powershell|command prompt|figma|github| - (word|excel|powerpoint)$/i;
+
+// Eye shapes. lid = how far the top lid is closed, tilt > 0 angry / < 0 worried, happy = ^_^ curve.
+const MOODS = {
+  neutral:    { w: 1,    h: 1,    lidL: 0,   lidR: 0,   tilt: 0,    happy: 0,   color: [90, 240, 255] },
+  happy:      { w: 1.05, h: 1,    lidL: 0,   lidR: 0,   tilt: 0,    happy: .55, color: [90, 240, 255] },
+  love:       { w: 1.05, h: 1,    lidL: 0,   lidR: 0,   tilt: 0,    happy: .55, color: [255, 110, 175] },
+  focused:    { w: 1.05, h: .8,   lidL: .2,  lidR: .2,  tilt: .2,   happy: 0,   color: [90, 240, 255] },
+  sleepy:     { w: 1,    h: 1,    lidL: .55, lidR: .55, tilt: -.25, happy: 0,   color: [70, 170, 220] },
+  sleeping:   { w: 1.05, h: .08,  lidL: 0,   lidR: 0,   tilt: 0,    happy: 0,   color: [60, 120, 200] },
+  stressed:   { w: .9,   h: 1.05, lidL: .1,  lidR: .1,  tilt: -.5,  happy: 0,   color: [255, 170, 70] },
+  suspicious: { w: 1,    h: .9,   lidL: .55, lidR: .15, tilt: .3,   happy: 0,   color: [190, 140, 255] },
+  surprised:  { w: 1.2,  h: 1.25, lidL: 0,   lidR: 0,   tilt: 0,    happy: 0,   color: [130, 255, 230] },
+  lost:       { w: .8,   h: .8,   lidL: .3,  lidR: .3,  tilt: -.3,  happy: 0,   color: [90, 110, 130] },
+};
+const TAP_LINES = ['Hehe, that tickles!', 'Hi! 😊', 'Beep boop!', "I'm watching your PC for you 🫡",
+                   '*happy robot noises*', 'You\'re doing great!', 'Boop! 🤖'];
+const FUN_LINES = ['Hmm… is this work? 👀', 'I see you…', 'Just one video, right? 🍿', 'Taking a little break? 😏'];
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- connection to the PC ----------
+let state = { x: 0, y: 0, cpu: 0, ram: 0, idle: 0, title: '', work: 0 };
+let lastMsg = -1e9, lastMove = -1e9, cpuS = 0, px = 0, py = 0;
+function onState(s) {
+  const now = performance.now();
+  if (Math.abs(s.x - px) + Math.abs(s.y - py) > 0.002) lastMove = now;
+  px = s.x; py = s.y;
+  cpuS += (s.cpu - cpuS) * 0.02;   // smoothed so short spikes don't stress it out
+  state = s; lastMsg = now;
+}
+const connected = now => now - lastMsg < 3000;
+
+// Demo mode (face.html?demo) for the website: no PC needed. The page around it sends
+// {x, y} to steer the eyes and {mood} to show off a mood.
+const DEMO = params.has('demo');
+const DEMO_LINES = {
+  happy: 'Beep boop! 😊', love: 'Hehe, that tickles! 💕', focused: 'Focus mode 🤓',
+  sleepy: '*yawn* 🥱', sleeping: '', stressed: 'Phew… CPU at 97% 🥵',
+  suspicious: 'Hmm… is this work? 👀', surprised: "Oh! You're back! 👋",
+};
+if (DEMO) {
+  let demo = { x: 0, y: 0 };
+  addEventListener('message', e => {
+    const d = e.data || {};
+    if (typeof d.x === 'number') demo = { x: clamp(d.x, -1, 1), y: clamp(d.y, -1, 1) };
+    if (d.mood && MOODS[d.mood]) { setOverride(d.mood, 5000); if (DEMO_LINES[d.mood]) say(DEMO_LINES[d.mood], 2500); }
+  });
+  addEventListener('pointermove', e => demo = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 });
+  setInterval(() => onState({ ...demo, cpu: 12, ram: 45, idle: 0, title: '', work: 12 }), 66);
+} else {
+  new EventSource('events').onmessage = e => onState(JSON.parse(e.data));
+}
+
+// ---------- speech bubble ----------
+const bubble = $('bubble');
+let bubbleTimer = 0;
+function say(html, ms) {
+  bubble.innerHTML = html;
+  bubble.classList.add('show');
+  clearTimeout(bubbleTimer);
+  if (ms > 0) bubbleTimer = setTimeout(() => reminding ? showReminder() : bubble.classList.remove('show'), ms);
+}
+const showReminder = () => say(`You've been working ${Math.round(state.work)} min!<br>Stretch &amp; drink some water 💧<br><small>tap me when done</small>`, 0);
+
+// ---------- mood brain ----------
+let baseMood = 'neutral', mood = 'neutral', override = null, reminding = false, breakAck = 0;
+let nextHappy = performance.now() + 20000;
+const lastSaid = {};
+function rateOk(key, ms) {
+  const n = performance.now();
+  if ((lastSaid[key] ?? -1e9) + ms > n) return false;
+  lastSaid[key] = n; return true;
+}
+const setOverride = (m, ms) => override = { mood: m, until: performance.now() + ms };
+
+function onMoodChange(prev, m) {
+  if (prev === 'lost' && m !== 'lost') { setOverride('happy', 1500); say('Connected! Hi there 👋', 2500); }
+  else if (prev === 'sleeping' && m !== 'lost') { setOverride('surprised', 1500); say("Oh! You're back! 👋", 2500); }
+  else if (m === 'lost') say('Looking for your PC…<br><small>is deskbuddy.py running?</small>', 0);
+  else if (m === 'sleepy') say('*yawn* 🥱', 2000);
+  else if (m === 'stressed' && rateOk('cpu', 60000)) say(`Phew… CPU at ${Math.round(cpuS)}% 🥵`, 3000);
+  else if (m === 'suspicious' && rateOk('fun', 180000)) say(pick(FUN_LINES), 3000);
+  else if (m === 'focused' && rateOk('focus', 600000)) say('Focus mode 🤓', 2000);
+}
+
+function think(now) {
+  let m;
+  if (!connected(now)) m = 'lost';
+  else if (state.idle > 600) m = 'sleeping';
+  else if (state.idle > 120) m = 'sleepy';
+  else if (cpuS > 85) m = 'stressed';
+  else if (FUN_RE.test(state.title)) m = 'suspicious';
+  else if (WORK_RE.test(state.title)) m = 'focused';
+  else m = 'neutral';
+  if (m !== baseMood) { onMoodChange(baseMood, m); baseMood = m; }
+
+  // Break reminder. The PC resets "work" after 5 min away, which also counts as a break.
+  if (state.work < breakAck) breakAck = 0;
+  const due = connected(now) && state.work - breakAck >= BREAK_MIN;
+  if (due && !reminding && m !== 'sleeping' && m !== 'sleepy') { reminding = true; showReminder(); }
+  if (!due && reminding) { reminding = false; bubble.classList.remove('show'); }
+
+  if (m === 'neutral' && now > nextHappy) {
+    nextHappy = now + 20000 + Math.random() * 25000;
+    if (Math.random() < .4) setOverride('happy', 1600);
+  }
+
+  const next = override && now < override.until ? override.mood : (reminding ? 'happy' : m);
+  if (next !== mood) { mood = next; updateGlow(); }
+}
+
+// ---------- drawing ----------
+let W, H, S;
+const cur = { ...MOODS.neutral }, col = [...MOODS.neutral.color];
+const look = { x: 0, y: 0 }; let lookT = { x: 0, y: 0 }, nextSaccade = 0;
+let blinkStart = -1e9, nextBlink = 0, bounce = 0, bounceV = 0, hudOn = true;
+
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  S = Math.min(W * 0.2, H * 0.42);
+  updateGlow();
+}
+function updateGlow() {
+  const [r, g, b] = MOODS[mood].color;
+  cv.style.filter = `drop-shadow(0 0 ${Math.round(S * 0.07)}px rgba(${r},${g},${b},.75))`;
+  document.documentElement.style.setProperty('--eye', `rgb(${r},${g},${b})`);
+}
+
+function roundRect(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawEye(cx, cy, w, h, lid, tilt, happy, isLeft, color) {
+  ctx.save();
+  roundRect(cx - w / 2, cy - h / 2, w, h, Math.min(w, h) * 0.3);
+  ctx.clip();
+  ctx.fillStyle = color;
+  ctx.fillRect(cx - w / 2 - 1, cy - h / 2 - 1, w + 2, h + 2);
+  ctx.fillStyle = '#000';
+  // Top lid: a slanted cut. Inner corner drops when angry, outer corner when worried.
+  const top = cy - h / 2, L = cx - w / 2 - 2, R = cx + w / 2 + 2;
+  const inner = lid + Math.max(0, tilt) * .5, outer = lid + Math.max(0, -tilt) * .5;
+  ctx.beginPath();
+  ctx.moveTo(L, top - 2); ctx.lineTo(R, top - 2);
+  ctx.lineTo(R, top + (isLeft ? inner : outer) * h);
+  ctx.lineTo(L, top + (isLeft ? outer : inner) * h);
+  ctx.fill();
+  // Happy: a big circle bites the bottom off, leaving a ^ shape.
+  if (happy > 0.01) {
+    const rr = w * 0.75;
+    ctx.beginPath(); ctx.arc(cx, cy + h / 2 + rr - happy * h, rr, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function floaty(text, x, y, size, alpha, color) {
+  ctx.globalAlpha = alpha; ctx.fillStyle = color;
+  ctx.font = `bold ${size}px system-ui, sans-serif`; ctx.textAlign = 'center';
+  ctx.fillText(text, x, y); ctx.globalAlpha = 1;
+}
+
+function draw(now, blink) {
+  ctx.clearRect(0, 0, W, H);
+  const color = `rgb(${col.map(Math.round)})`;
+  const jitter = mood === 'stressed' ? S * 0.012 : 0;
+  const breathe = (mood === 'sleeping' || mood === 'sleepy') ? Math.sin(now / 900) * S * .04 : 0;
+  const cx = W / 2 + look.x * S * .45 + (Math.random() - .5) * jitter;
+  const cy = H / 2 + look.y * S * .3 + breathe + bounce * S * .5 - (hudOn ? S * .06 : 0);
+  const gap = S * .72;
+  for (const side of [-1, 1]) {
+    const persp = 1 + side * look.x * .07;   // eye nearer the look direction gets a bit bigger
+    const w = S * .78 * cur.w * persp;
+    const h = Math.max(S * cur.h * persp * blink, S * .05);
+    drawEye(cx + side * gap, cy, w, h, side < 0 ? cur.lidL : cur.lidR, cur.tilt, cur.happy, side < 0, color);
+  }
+  const rx = cx + gap, top = cy - S / 2;
+
+  if (mood === 'sleeping') {
+    for (let i = 0; i < 3; i++) {
+      const p = (now / 2200 + i / 3) % 1;
+      floaty('z', rx + S * .45 + p * S * .5, cy - S * .15 - p * S * .8, S * (.16 + p * .16), Math.sin(p * Math.PI), color);
+    }
+  } else if (mood === 'stressed') {
+    const p = (now / 1400) % 1, d = S * .07, x = rx + S * .5, y = top + p * S * .5;
+    ctx.globalAlpha = Math.sin(p * Math.PI); ctx.fillStyle = 'rgb(120,200,255)';
+    ctx.beginPath(); ctx.moveTo(x, y - d * 1.4);
+    ctx.bezierCurveTo(x + d, y - d * .2, x + d * .7, y + d, x, y + d);
+    ctx.bezierCurveTo(x - d * .7, y + d, x - d, y - d * .2, x, y - d * 1.4);
+    ctx.fill(); ctx.globalAlpha = 1;
+  } else if (mood === 'love') {
+    for (let i = 0; i < 4; i++) {
+      const p = (now / 1600 + i / 4) % 1;
+      floaty('♥', W / 2 + Math.sin(i * 2.3 + p * 4) * S * 1.3, cy + S * .7 - p * S * 1.4, S * .22, Math.sin(p * Math.PI), color);
+    }
+  } else if (mood === 'lost') {
+    floaty('?', rx + S * .55, top, S * .35, .5 + .5 * Math.sin(now / 400), color);
+  }
+}
+
+// ---------- main loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  think(now);
+
+  // Where to look: follow the PC cursor while it moves, otherwise glance around.
+  if (mood === 'sleeping') lookT = { x: 0, y: .15 };
+  else if (reminding || mood === 'surprised') lookT = { x: 0, y: 0 };
+  else if (connected(now) && now - lastMove < 2500) lookT = { x: clamp(state.x, -1, 1), y: clamp(state.y, -1, 1) };
+  else if (now > nextSaccade) {
+    nextSaccade = now + 1200 + Math.random() * 3000;
+    lookT = Math.random() < .35 ? { x: 0, y: 0 } : { x: (Math.random() * 2 - 1) * .7, y: (Math.random() * 2 - 1) * .5 };
+  }
+
+  const T = MOODS[mood];
+  const ks = 1 - Math.exp(-dt * 8), kl = 1 - Math.exp(-dt * (mood === 'focused' ? 18 : 12));
+  for (const k of ['w', 'h', 'lidL', 'lidR', 'tilt', 'happy']) cur[k] += (T[k] - cur[k]) * ks;
+  for (let i = 0; i < 3; i++) col[i] += (T.color[i] - col[i]) * ks;
+  look.x += (lookT.x - look.x) * kl; look.y += (lookT.y - look.y) * kl;
+
+  if (now > nextBlink && mood !== 'sleeping') {
+    blinkStart = now;
+    nextBlink = now + (Math.random() < .15 ? 260 : 2000 + Math.random() * 4500);
+  }
+  const bt = (now - blinkStart) / 160;
+  const blink = bt < 1 ? 1 - .92 * Math.sin(bt * Math.PI) : 1;
+
+  bounceV += (-140 * bounce - 9 * bounceV) * dt;
+  bounce += bounceV * dt;
+
+  draw(now, blink);
+  requestAnimationFrame(frame);
+}
+
+// ---------- touch ----------
+const installed = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone;
+function keepAwake() {
+  // Only allowed on "secure" pages - works once the phone trusts this address (see setup steps).
+  if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {});
+}
+function goFullscreen() {
+  const el = document.documentElement;
+  const lockLandscape = () => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {});
+  if (installed || document.fullscreenElement) return lockLandscape();
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (req) Promise.resolve(req.call(el, { navigationUI: 'hide' })).then(lockLandscape, () => {});
+}
+if (!DEMO) {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  keepAwake();
+}
+addEventListener('pointerdown', () => {
+  if (!DEMO) {
+    goFullscreen();   // every tap, so it pops back to fullscreen if you swiped out
+    keepAwake();
+  }
+  bounceV = -3.5;
+  if (reminding) {
+    reminding = false; breakAck = state.work;
+    setOverride('love', 2200); say('Thanks! Your body says thank you too 💙', 2500);
+  } else if (mood === 'sleeping') {
+    setOverride('surprised', 1200); say('Huh?! I was just resting my eyes…', 2500);
+  } else {
+    setOverride(Math.random() < .3 ? 'love' : 'happy', 1800);
+    if (rateOk('tap', 4000)) say(pick(TAP_LINES), 2200);
+  }
+});
+addEventListener('dblclick', () => { hudOn = !hudOn; $('hud').style.display = hudOn ? '' : 'none'; });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) keepAwake(); });
+
+// ---------- HUD ----------
+setInterval(() => {
+  const d = new Date();
+  $('clock').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  $('cpu').style.width = clamp(state.cpu, 0, 100) + '%';
+  $('ram').style.width = clamp(state.ram, 0, 100) + '%';
+  $('work').textContent = `⏱ ${Math.floor(state.work)}m`;
+}, 1000);
+
+addEventListener('resize', resize);
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

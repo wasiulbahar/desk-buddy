@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Desk Buddy · a robot friend for your desk</title>
+<meta name="description" content="Turn your spare phone into a cute desk robot that reacts to what your PC is doing. One file, free, Windows.">
+<meta property="og:title" content="Desk Buddy">
+<meta property="og:description" content="Turn your spare phone into a cute desk robot that reacts to what your PC is doing.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14'/%3E%3Crect x='14' y='20' width='14' height='24' rx='5' fill='%235af0ff'/%3E%3Crect x='36' y='20' width='14' height='24' rx='5' fill='%235af0ff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05080b; --panel: #0b1218; --line: #17252e; --text: #d8eef2; --muted: #8aa3ab;
+    --cyan: #5af0ff; --pink: #ff6eaf; --orange: #ffaa46; --violet: #be8cff;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Space Grotesk", system-ui, "Segoe UI", sans-serif; line-height: 1.6;
+    background-image: radial-gradient(circle at 70% 0%, rgba(90,240,255,.12), transparent 45%),
+                      radial-gradient(circle at 0% 60%, rgba(190,140,255,.07), transparent 40%);
+  }
+  a { color: var(--cyan); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; color: var(--text); text-decoration: none; }
+  .logo i { width: 34px; height: 34px; border-radius: 9px; background: #000; display: flex; gap: 5px;
+            align-items: center; justify-content: center; box-shadow: 0 0 18px rgba(90,240,255,.3); }
+  .logo i::before, .logo i::after { content: ""; width: 7px; height: 12px; border-radius: 3px; background: var(--cyan); }
+  nav .links a { color: var(--muted); text-decoration: none; margin-left: 22px; font-size: 15px; }
+  nav .links a:hover { color: var(--text); }
+
+  .hero { display: grid; grid-template-columns: 1fr 1.15fr; gap: 48px; align-items: center; padding: 48px 0 40px; }
+  .tag { display: inline-block; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--cyan);
+         border: 1px solid rgba(90,240,255,.35); border-radius: 99px; padding: 4px 12px; }
+  h1 { font-size: clamp(38px, 5.4vw, 64px); line-height: 1.05; margin: 18px 0; letter-spacing: -.02em; }
+  h1 span { color: var(--cyan); text-shadow: 0 0 30px rgba(90,240,255,.45); }
+  .lead { font-size: 19px; color: var(--muted); max-width: 30em; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 24px; border-radius: 14px; font-weight: 700;
+         font-size: 17px; text-decoration: none; transition: transform .15s, box-shadow .15s; }
+  .btn.primary { background: var(--cyan); color: #00262c; box-shadow: 0 6px 30px rgba(90,240,255,.35); }
+  .btn.primary:hover { transform: translateY(-2px); box-shadow: 0 10px 40px rgba(90,240,255,.5); }
+  .btn.ghost { color: var(--text); border: 1px solid var(--line); background: var(--panel); }
+  .btn.ghost:hover { border-color: var(--muted); }
+  .small { font-size: 14px; color: var(--muted); }
+
+  .stage { position: relative; }
+  .phone { aspect-ratio: 2.05; background: #000; border: 10px solid #15191d; border-radius: 34px; overflow: hidden;
+           box-shadow: 0 0 0 1px #2a3138, 0 30px 80px rgba(0,0,0,.6), 0 0 90px rgba(90,240,255,.12); position: relative; }
+  .phone::after { content: ""; position: absolute; left: 10px; top: 50%; width: 6px; height: 6px; margin-top: -3px;
+                  border-radius: 50%; background: #1d242a; }
+  .phone iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .stand { width: 34%; height: 18px; margin: -2px auto 0; background: linear-gradient(#1a2026, #0d1114);
+           border-radius: 0 0 12px 12px; }
+  .moods { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 22px; }
+  .moods button { font: inherit; font-size: 14px; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+                  border-radius: 99px; padding: 7px 14px; cursor: pointer; transition: border-color .15s, transform .15s; }
+  .moods button:hover { border-color: var(--cyan); transform: translateY(-1px); }
+  .hint { text-align: center; margin-top: 10px; }
+
+  section { padding: 72px 0; }
+  h2 { font-size: clamp(28px, 3.6vw, 40px); margin: 0 0 10px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 36px; max-width: 40em; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+  .card .em { font-size: 28px; }
+  .card h3 { margin: 8px 0 6px; font-size: 19px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: s; }
+  .step { position: relative; padding: 26px 22px 22px; border-radius: 18px; border: 1px solid var(--line);
+          background: linear-gradient(180deg, rgba(90,240,255,.05), transparent); }
+  .step::before { counter-increment: s; content: counter(s); position: absolute; top: -16px; left: 22px; width: 32px; height: 32px;
+                  border-radius: 10px; background: var(--cyan); color: #00262c; font-weight: 700; display: grid; place-items: center; }
+  .step h3 { margin: 4px 0 6px; }
+  .step p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  .download { text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 26px; padding: 56px 24px;
+              box-shadow: inset 0 0 120px rgba(90,240,255,.06); }
+  .download .cta { justify-content: center; }
+  .reqs { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin-top: 22px; color: var(--muted); font-size: 14px; }
+
+  details { border-bottom: 1px solid var(--line); padding: 16px 0; }
+  summary { cursor: pointer; font-weight: 500; font-size: 17px; list-style: none; }
+  summary::before { content: "+"; display: inline-block; width: 22px; color: var(--cyan); }
+  details[open] summary::before { content: "–"; }
+  details p { color: var(--muted); margin: 10px 0 0 22px; }
+  kbd { background: #111a20; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: .9em; }
+
+  footer { padding: 40px 0 60px; color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; gap: 36px; padding-top: 24px; }
+    .grid, .steps { grid-template-columns: 1fr; }
+    .steps { gap: 30px; }
+    nav .links a:not(.gh) { display: none; }
+    section { padding: 52px 0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="logo" href="#"><i></i>Desk Buddy</a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#faq">FAQ</a>
+      <a class="gh" href="https://github.com/wasiulbahar/desk-buddy">GitHub</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div>
+      <span class="tag">Free · Windows · No setup</span>
+      <h1>Your spare phone is now a <span>desk robot</span>.</h1>
+      <p class="lead">Desk Buddy turns an old phone into a little robot friend that watches your cursor, gets sleepy when you're away, sweats when your CPU is maxed, and reminds you to stretch.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/wasiulbahar/desk-buddy/releases/latest/download/DeskBuddy.exe">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
+          Download for Windows
+        </a>
+        <a class="btn ghost" href="https://github.com/wasiulbahar/desk-buddy">View source</a>
+      </div>
+      <p class="small" style="margin-top:14px">One 14 MB file. Double-click and you're done.</p>
+    </div>
+    <div class="stage">
+      <div class="phone"><iframe id="demo" src="face.html?demo" title="Desk Buddy live demo"></iframe></div>
+      <div class="stand"></div>
+      <div class="moods" id="moods">
+        <button data-mood="happy">😊 Happy</button>
+        <button data-mood="love">💕 Love</button>
+        <button data-mood="focused">🤓 Focused</button>
+        <button data-mood="suspicious">👀 Suspicious</button>
+        <button data-mood="stressed">🥵 Stressed</button>
+        <button data-mood="sleeping">😴 Asleep</button>
+      </div>
+      <p class="small hint">Move your mouse around: it's watching you. Click a mood to try it.</p>
+    </div>
+  </header>
+
+  <section id="features">
+    <h2>It reacts to everything you do</h2>
+    <p class="sub">Desk Buddy reads what's happening on your PC and turns it into tiny robot emotions.</p>
+    <div class="grid">
+      <div class="card"><div class="em">🖱️</div><h3>Follows your cursor</h3><p>Its eyes track your mouse across every monitor, then glance around when you stop.</p></div>
+      <div class="card"><div class="em">🤓</div><h3>Knows when you focus</h3><p>Open VS Code, a terminal, Figma or Office and it switches to narrow-eyed focus mode.</p></div>
+      <div class="card"><div class="em">👀</div><h3>Judges your breaks</h3><p>YouTube, Netflix or Reddit? You'll get a very suspicious purple squint.</p></div>
+      <div class="card"><div class="em">🥵</div><h3>Feels your CPU</h3><p>When your PC is working hard, it turns orange and starts sweating.</p></div>
+      <div class="card"><div class="em">😴</div><h3>Naps when you do</h3><p>Step away and it yawns, then falls asleep. Come back and it wakes up happy to see you.</p></div>
+      <div class="card"><div class="em">💧</div><h3>Looks after you</h3><p>After 50 minutes of work it reminds you to stretch and drink some water. Tap to say thanks.</p></div>
+    </div>
+  </section>
+
+  <section id="how">
+    <h2>Ready in under a minute</h2>
+    <p class="sub">No accounts, no cables, no app store. Your phone just needs a browser and the same Wi-Fi as your PC.</p>
+    <div class="steps">
+      <div class="step"><h3>Run DeskBuddy.exe</h3><p>It installs itself, starts with Windows, and puts a little robot in your system tray.</p></div>
+      <div class="step"><h3>Scan the QR code</h3><p>A page pops up with a QR code. Point your phone's camera at it.</p></div>
+      <div class="step"><h3>Stand it on your desk</h3><p>Tap the robot to go fullscreen, prop the phone next to your monitor, and say hi.</p></div>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="download">
+      <h2>Give your desk a buddy</h2>
+      <p class="sub" style="margin:0 auto 8px">Free and open source. Uninstall any time from Windows Settings → Apps.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/wasiulbahar/desk-buddy/releases/latest/download/DeskBuddy.exe">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
+          Download DeskBuddy.exe
+        </a>
+      </div>
+      <div class="reqs"><span>🪟 Windows 10 / 11</span><span>📱 Any phone with a browser</span><span>📶 Same Wi-Fi network</span></div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <h2>Questions</h2>
+    <details><summary>Windows says "Windows protected your PC". Is it safe?</summary>
+      <p>That warning appears for apps that aren't signed with a paid certificate. Click <b>More info → Run anyway</b>. All the code is public on GitHub if you'd like to check it or build it yourself.</p></details>
+    <details><summary>Why does it ask for admin permission once?</summary>
+      <p>Only to let your phone reach the PC through the Windows firewall. It allows home/work networks only, never public Wi-Fi.</p></details>
+    <details><summary>Does it send my data anywhere?</summary>
+      <p>No. Everything stays on your own Wi-Fi between your PC and your phone. There's no account, no cloud and no tracking.</p></details>
+    <details><summary>Can I make it look like an app on my phone?</summary>
+      <p>Yes. In your phone's browser menu, choose <b>Add to Home screen</b>. It gets its own robot icon and opens fullscreen.</p></details>
+    <details><summary>My phone can't connect anymore.</summary>
+      <p>Your PC's network address probably changed. Right-click the robot in the system tray, choose <b>Connect a phone</b>, and scan the new QR code.</p></details>
+    <details><summary>How do I remove it?</summary>
+      <p>Windows <b>Settings → Apps</b> → Desk Buddy → Uninstall, or right-click the tray robot and choose <b>Uninstall</b>.</p></details>
+  </section>
+
+  <footer>
+    <span>Desk Buddy · made with 💙 and a spare phone</span>
+    <a href="https://github.com/wasiulbahar/desk-buddy">github.com/wasiulbahar/desk-buddy</a>
+  </footer>
+</div>
+
+<script>
+  const frame = document.getElementById('demo');
+  const send = msg => frame.contentWindow && frame.contentWindow.postMessage(msg, '*');
+
+  // The robot's eyes follow the mouse anywhere on the page, not just inside the phone.
+  addEventListener('pointermove', e => {
+    const r = frame.getBoundingClientRect();
+    const x = (e.clientX - (r.left + r.width / 2)) / (innerWidth / 2);
+    const y = (e.clientY - (r.top + r.height / 2)) / (innerHeight / 2);
+    send({ x, y });
+  });
+
+  document.getElementById('moods').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (b) send({ mood: b.dataset.mood });
+  });
+</script>
+</body>
+</html>
