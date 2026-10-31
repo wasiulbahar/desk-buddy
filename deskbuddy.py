@@ -16,12 +16,14 @@ import email
 import html
 import imaplib
 import io
+import ipaddress
 import json
 import math
 import os
 import random
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -36,8 +38,9 @@ from email.utils import parseaddr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "Desk Buddy"
-VERSION = "1.2"
+VERSION = "2.0"
 PORT = int(os.environ.get("DESKBUDDY_PORT", 8765))
+HTTPS_PORT = PORT + 1     # the secure link, needed for the phone's motion sensors and microphone
 FPS = 15                  # how often the phone gets cursor updates
 SESSION_RESET_IDLE = 300  # seconds away from the PC that count as "took a break"
 
@@ -53,6 +56,8 @@ FIREWALL_RULE = "DeskBuddy"
 NO_WINDOW = 0x08000000
 DATA_DIR = os.path.join(os.environ["APPDATA"], "DeskBuddy")   # settings and friendship progress
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+CERT_FILE = os.path.join(DATA_DIR, "phone-link.crt")
+KEY_FILE = os.path.join(DATA_DIR, "phone-link.key")
 BUDDY_FILE = os.path.join(DATA_DIR, "buddy.json")
 
 user32 = ctypes.windll.user32
@@ -129,7 +134,7 @@ def cursor_position():
 
 
 stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0,
-         "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0}
+         "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0, "backspaces": 0}
 
 
 # ---------- saved files: settings (secrets encrypted by Windows) and friendship ----------
@@ -659,6 +664,87 @@ def phone_url():
     return f"http://{lan_ip()}:{PORT}"
 
 
+def secure_phone_url():
+    return f"https://{lan_ip()}:{HTTPS_PORT}"
+
+
+def ensure_certificate():
+    """A self-made certificate for the secure link. Phones show a one-time warning for it (normal on
+    your own Wi-Fi); after that they allow motion sensors and the mic. Remade if the PC's address changes."""
+    ip = lan_ip()
+    try:
+        from cryptography import x509
+        if os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE):
+            with open(CERT_FILE, "rb") as f:
+                san = x509.load_pem_x509_certificate(f.read()).extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            if ipaddress.ip_address(ip) in san.value.get_values_for_type(x509.IPAddress):
+                return True
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Desk Buddy")])
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1)).not_valid_after(now + datetime.timedelta(days=3650))
+                .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(ip)), x509.DNSName("localhost")]), False)
+                .add_extension(x509.BasicConstraints(ca=False, path_length=None), True)
+                .sign(key, hashes.SHA256()))
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(KEY_FILE, "wb") as f:
+            f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+        with open(CERT_FILE, "wb") as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+        return True
+    except Exception:
+        return False
+
+
+class SecureServer(ThreadingHTTPServer):
+    """The same web server over https. The TLS handshake happens in each request's own thread,
+    so a phone that's still deciding about the certificate warning can't hold anything up."""
+
+    def get_request(self):
+        sock, addr = super().get_request()
+        return self.tls.wrap_socket(sock, server_side=True, do_handshake_on_connect=False), addr
+
+    def handle_error(self, request, client_address):
+        pass   # phones refusing the self-made certificate are expected, not errors
+
+
+def start_secure_server():
+    if not ensure_certificate():
+        return
+    try:
+        server = SecureServer(("0.0.0.0", HTTPS_PORT), Handler)
+        server.tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server.tls.load_cert_chain(CERT_FILE, KEY_FILE)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    except OSError:
+        pass
+
+
+# What the phone reports it was allowed to use (shown in the dashboard).
+phone_caps = {"secure": False, "motion": "off", "mic": "off", "at": 0}
+
+
+def keys_loop():
+    """Counts Backspace presses for Cheeky mode's typo jokes. Only that one key, only as a number,
+    and only while Cheeky mode is set to Spicy."""
+    count, was_down = 0, False
+    while True:
+        if prefs["cheeky"] >= 3:
+            down = bool(user32.GetAsyncKeyState(0x08) & 0x8000)   # VK_BACK
+            if down and not was_down:
+                count += 1
+                stats["backspaces"] = count
+            was_down = down
+            time.sleep(0.03)
+        else:
+            time.sleep(1)
+
+
 # ---------- icons, app manifest, pairing page ----------
 
 def robot_image(n, eye_scale=1.0):
@@ -717,7 +803,8 @@ def qr_svg(text):
 # ---------- the dashboard's API (only answers this PC) ----------
 
 def live_status():
-    return {"phones": phones, "buddy": buddy_info(), **services}
+    caps = phone_caps if time.time() - phone_caps["at"] < 120 else None
+    return {"phones": phones, "buddy": buddy_info(), "phoneCaps": caps, **services}
 
 
 def api_state():
@@ -725,6 +812,7 @@ def api_state():
     return {
         **live_status(), "version": VERSION, "installed": FROZEN, "onboarded": config["onboarded"],
         "personalities": PERSONALITIES, "prefs": prefs, "phoneUrl": url, "qr": qr_svg(url),
+        "secureUrl": secure_phone_url(), "secureQr": qr_svg(secure_phone_url()),
         "gmailUser": config["gmail_user"], "gmailSaved": bool(config["gmail_password"]),
         "calendarSaved": bool(config["calendar_url"]), "startup": os.path.exists(STARTUP_LNK),
     }
@@ -874,6 +962,14 @@ class Handler(BaseHTTPRequestHandler):
             if kind in ("pet", "break"):
                 add_points(kind)
             self.send_body("application/json", json.dumps(buddy_info()).encode(), cache=False)
+        elif path == "/phone-status":
+            try:
+                data = json.loads(body)
+                phone_caps.update(secure=bool(data.get("secure")), motion=str(data.get("motion", "off"))[:12],
+                                  mic=str(data.get("mic", "off"))[:12], at=time.time())
+            except (ValueError, AttributeError):
+                pass
+            self.send_body("application/json", b"{}", cache=False)
         elif path == "/sound":
             # The phone asks the PC to make the sound (when sound is set to PC or both).
             if prefs["soundOutput"] in ("pc", "both"):
@@ -978,13 +1074,13 @@ def allow_through_firewall(exe):
     # Already allowed (e.g. installing an update): skip the admin prompt.
     shown = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={FIREWALL_RULE}", "verbose"],
                            capture_output=True, text=True, creationflags=NO_WINDOW).stdout
-    if os.path.normcase(exe) in os.path.normcase(shown):
+    if os.path.normcase(exe) in os.path.normcase(shown) and str(HTTPS_PORT) in shown:
         return
     # Only home/work ("private") networks - the robot never listens on public Wi-Fi.
     run_as_admin("cmd.exe",
                  f"/c netsh advfirewall firewall delete rule name={FIREWALL_RULE} >nul & "
                  f"netsh advfirewall firewall add rule name={FIREWALL_RULE} dir=in action=allow "
-                 f'protocol=TCP localport={PORT} program="{exe}" profile=private,domain enable=yes')
+                 f'protocol=TCP localport={PORT},{HTTPS_PORT} program="{exe}" profile=private,domain enable=yes')
 
 
 def make_shortcut(lnk, target, args=""):
@@ -1085,7 +1181,7 @@ def run_app(args):
         "/icon-192.png": ("image/png", png_bytes(robot_image(192))),
         "/icon-512.png": ("image/png", png_bytes(robot_image(512))),
     }
-    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop):
+    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, start_secure_server):
         threading.Thread(target=loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

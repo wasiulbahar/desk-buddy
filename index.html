@@ -128,7 +128,7 @@
         </a>
         <a class="btn ghost" href="https://github.com/wasiulbahar/desk-buddy">View source</a>
       </div>
-      <p class="small" style="margin-top:14px">One 14 MB file. Double-click and you're done.</p>
+      <p class="small" style="margin-top:14px">One small file. Double-click and you're done.</p>
     </div>
     <div class="stage">
       <div class="phone"><iframe id="demo" src="face.html?demo" title="Desk Buddy live demo" allow="autoplay"></iframe></div>
@@ -146,6 +146,7 @@
         <button data-mood="fly">🦟 Fly</button>
         <button data-mood="reading">👓 Reading</button>
         <button data-mood="mail">📧 New mail</button>
+        <button data-tool="timer">⏳ Timer</button>
       </div>
       <p class="small hint">Move your mouse: it's watching you. Drag across it to pet it, click to poke it (not too much!).</p>
     </div>
@@ -166,7 +167,10 @@
       <div class="card"><div class="em">👓</div><h3>Reads with you</h3><p>Open a PDF or a doc and it puts on glasses and reads along. In meetings it goes quiet.</p></div>
       <div class="card"><div class="em">📬</div><h3>Mail and calendar</h3><p>It tells you when new Gmail arrives and reminds you before every Google Calendar event.</p></div>
       <div class="card"><div class="em">💞</div><h3>A friend that grows</h3><p>Its own name and personality, and a friendship that grows from shy to best friends.</p></div>
-      <div class="card"><div class="em">🤧</div><h3>Has a life of its own</h3><p>It sneezes, hiccups, hums, chases flies and says good morning. Spin your mouse and it gets dizzy.</p></div>
+      <div class="card"><div class="em">⏳</div><h3>A toolbox in its eyes</h3><p>Hold the screen for a timer, clock, stopwatch, focus sessions, a breathing exercise or dice, each with its own look.</p></div>
+      <div class="card"><div class="em">📳</div><h3>Shake, tilt, clap</h3><p>Shake the phone and it gets dizzy, tilt it and its eyes roll, clap twice and it wakes up.</p></div>
+      <div class="card"><div class="em">😈</div><h3>Cheeky mode</h3><p>Optional teasing in three levels, from a sideways glance to dodging your finger.</p></div>
+      <div class="card"><div class="em">🎛️</div><h3>A dashboard for everything</h3><p>Switch any feature on or off, pick its voice and where sound plays, right from your PC.</p></div>      <div class="card"><div class="em">🤧</div><h3>Has a life of its own</h3><p>It sneezes, hiccups, hums, chases flies and says good morning. Spin your mouse and it gets dizzy.</p></div>
     </div>
     <p style="text-align:center;margin-top:28px"><a class="btn ghost" href="features.html">See every feature →</a></p>
   </section>
@@ -175,8 +179,8 @@
     <h2>Ready in under a minute</h2>
     <p class="sub">No accounts, no cables, no app store. Your phone just needs a browser and the same Wi-Fi as your PC.</p>
     <div class="steps">
-      <div class="step"><h3>Run DeskBuddy.exe</h3><p>It installs itself, starts with Windows, and puts a little robot in your system tray.</p></div>
-      <div class="step"><h3>Scan the QR code</h3><p>A page pops up with a QR code. Point your phone's camera at it.</p></div>
+      <div class="step"><h3>Run DeskBuddy.exe</h3><p>It installs itself, starts with Windows, and opens a short welcome tour to meet your buddy.</p></div>
+      <div class="step"><h3>Scan the QR code</h3><p>The tour shows a QR code. Point your phone's camera at it and the tour cheers when it connects.</p></div>
       <div class="step"><h3>Stand it on your desk</h3><p>Tap the robot to go fullscreen, prop the phone next to your monitor, and say hi.</p></div>
     </div>
   </section>
@@ -199,7 +203,10 @@
     <h2>Questions</h2>
     <details><summary>Windows says "Windows protected your PC". Is it safe?</summary>
       <p>That warning appears for apps that aren't signed with a paid certificate. Click <b>More info → Run anyway</b>. All the code is public on GitHub if you'd like to check it or build it yourself.</p></details>
-    <details><summary>Why does it ask for admin permission once?</summary>
+    <details><summary>Why does my phone say "not private" for the sensors link?</summary>
+      <p>Phones only share motion sensors and the microphone with secure pages, so Desk Buddy makes its own certificate for your Wi-Fi. Phones don't know that certificate, so they warn once. Tap <b>Advanced → Continue</b>. Everything still stays between your PC and your phone.</p></details>
+    <details><summary>Will Cheeky mode get annoying?</summary>
+      <p>It's off unless you turn it on, and you pick how cheeky (Mild, Medium or Spicy). It never touches your PC, never fakes real alerts and stays quiet in meetings.</p></details>    <details><summary>Why does it ask for admin permission once?</summary>
       <p>Only to let your phone reach the PC through the Windows firewall. It allows home/work networks only, never public Wi-Fi.</p></details>
     <details><summary>Does it send my data anywhere?</summary>
       <p>No. Everything stays on your own Wi-Fi between your PC and your phone. There's no account, no cloud and no tracking. If you connect Gmail or Google Calendar, your PC checks them directly with Google, and your App Password and calendar link are encrypted by Windows.</p></details>
@@ -208,7 +215,7 @@
     <details><summary>My phone can't connect anymore.</summary>
       <p>Your PC's network address probably changed. Right-click the robot in the system tray, choose <b>Connect a phone</b>, and scan the new QR code.</p></details>
     <details><summary>How do I remove it?</summary>
-      <p>Windows <b>Settings → Apps</b> → Desk Buddy → Uninstall, or right-click the tray robot and choose <b>Uninstall</b>.</p></details>
+      <p>Windows <b>Settings → Apps</b> → Desk Buddy → Uninstall, or open the Desk Buddy dashboard → <b>About</b> → <b>Uninstall</b>.</p></details>
   </section>
 
   <footer>
@@ -231,7 +238,9 @@
 
   document.getElementById('moods').addEventListener('click', e => {
     const b = e.target.closest('button');
-    if (b) send({ mood: b.dataset.mood });
+    if (!b) return;
+    if (b.dataset.tool) send({ tool: b.dataset.tool });
+    else { send({ tool: '' }); send({ mood: b.dataset.mood }); }
   });
 </script>
 </body>
