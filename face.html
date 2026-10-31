@@ -131,22 +131,37 @@ const store = {
   set: (k, v) => { try { localStorage.setItem('deskbuddy.' + k, v); } catch (e) {} },
 };
 
-// ---------- voice: little chirps and beeps, made on the fly (no words) ----------
-let ac = null, soundOn = store.get('sound') !== 'off';
-const quiet = () => mood === 'meeting' || baseMood === 'meeting';   // never beep during a meeting
+// ---------- voice: soft "buddy-speak" and gentle chimes, made on the fly (no words) ----------
+let ac = null, bus = null, soundOn = store.get('sound') !== 'off';
+const quiet = () => mood === 'meeting' || baseMood === 'meeting';   // never a peep during a meeting
 function audio() {
-  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
+  if (!ac) {
+    try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+    // Everything plays through a soft little "room": the dry sound plus a gentle echo tail.
+    bus = ac.createGain();
+    bus.connect(ac.destination);
+    const room = ac.createConvolver(), wet = ac.createGain(), n = Math.floor(ac.sampleRate * 1.4);
+    const impulse = ac.createBuffer(2, n, ac.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = impulse.getChannelData(ch);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3);
+    }
+    room.buffer = impulse; wet.gain.value = .22;
+    bus.connect(room).connect(wet).connect(ac.destination);
+  }
   if (ac.state === 'suspended') ac.resume();
   return ac;
 }
-// Every sound is a list of notes and noise bursts. Played here, and/or sent to the PC to play the same way.
+
+// Every sound is a list of tones, noise puffs and spoken syllables. Played here, and/or sent to
+// the PC, which synthesises exactly the same list (see render_sound in deskbuddy.py).
 let outbox = null, forcePhone = false;
 function emit(ev) {
   if (!forcePhone && (!soundOn || quiet())) return;
   const out = forcePhone || DEMO ? 'phone' : P('soundOutput');
-  if (out === 'phone' || out === 'both') (ev.k === 'noise' ? playNoise : playTone)(ev);
+  if (out === 'phone' || out === 'both') ({ tone: playTone, noise: playNoise, syl: playSyl })[ev.k](ev);
   if (out === 'pc' || out === 'both') {
-    if (!outbox) {   // gather the notes of one sound into a single message
+    if (!outbox) {   // gather the parts of one sound into a single message
       outbox = [];
       queueMicrotask(() => {
         const events = outbox; outbox = null;
@@ -156,68 +171,172 @@ function emit(ev) {
     outbox.push(ev);
   }
 }
-function tone(f0, f1, dur, { type = 'sine', vol = .12, delay = 0, vib = 0, trem = 0 } = {}) {
-  emit({ k: 'tone', f0, f1, dur, type, vol, delay, vib, trem });
+function tone(f0, f1, dur, { type = 'sine', vol = .1, delay = 0, vib = 0, trem = 0, att = 0, lp = 0 } = {}) {
+  emit({ k: 'tone', f0, f1, dur, type, vol, delay, vib, trem, att, lp });
 }
 function noise(dur, vol, freq, delay = 0) {
   emit({ k: 'noise', dur, vol, freq, delay });
 }
-function playTone({ f0, f1, dur, type, vol, delay, vib, trem }) {
+function syllable(f0, f1, dur, vowel, { vol = .08, delay = 0, wave = 'triangle', breath = .02, vib = 0 } = {}) {
+  const [F1, F2] = VOWELS[vowel] || VOWELS.a;
+  emit({ k: 'syl', f0, f1, dur, vol, delay, F1, F2, wave, breath, vib });
+}
+
+const loud = v => v * P('volume') / 100;
+const wobble = (a, t, dur, rate, depth, target) => {
+  const l = a.createOscillator(), lg = a.createGain();
+  l.frequency.value = rate; lg.gain.value = depth;
+  l.connect(lg).connect(target); l.start(t); l.stop(t + dur + .05);
+};
+const bandpass = (a, freq, q) => { const f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q; return f; };
+function noiseSource(a, dur) {
+  const buf = a.createBuffer(1, Math.ceil(a.sampleRate * dur), a.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const src = a.createBufferSource(); src.buffer = buf; return src;
+}
+function playTone({ f0, f1, dur, type, vol, delay, vib, trem, att, lp }) {
   const a = audio();
-  if (!a) return;
-  vol *= P('volume') / 100;
-  if (vol < .0002) return;
+  vol = loud(vol);
+  if (!a || vol < .0002) return;
   const t = a.currentTime + delay, o = a.createOscillator(), g = a.createGain();
   o.type = type;
   o.frequency.setValueAtTime(f0, t);
   o.frequency.exponentialRampToValueAtTime(f1, t + dur);
   g.gain.setValueAtTime(.0001, t);
-  g.gain.exponentialRampToValueAtTime(vol, t + Math.min(.03, dur / 3));
+  g.gain.exponentialRampToValueAtTime(vol, t + (att || Math.min(.03, dur / 3)));
   g.gain.exponentialRampToValueAtTime(.0001, t + dur);
-  o.connect(g).connect(a.destination);
-  const wobble = (rate, depth, target) => {
-    const l = a.createOscillator(), lg = a.createGain();
-    l.frequency.value = rate; lg.gain.value = depth;
-    l.connect(lg).connect(target); l.start(t); l.stop(t + dur + .05);
-  };
-  if (vib) wobble(vib, f0 * .05, o.frequency);   // wavering pitch
-  if (trem) wobble(trem, vol * .8, g.gain);      // fluttering volume (purr)
+  if (lp) {   // soften bright waves
+    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lp; f.Q.value = .707;
+    o.connect(f).connect(g);
+  } else o.connect(g);
+  g.connect(bus);
+  if (vib) wobble(a, t, dur, vib, f0 * .05, o.frequency);   // wavering pitch
+  if (trem) wobble(a, t, dur, trem, vol * .8, g.gain);      // fluttering volume (a contented hum)
   o.start(t); o.stop(t + dur + .05);
 }
 function playNoise({ dur, vol, freq, delay }) {
   const a = audio();
-  if (!a) return;
-  vol *= P('volume') / 100;
-  if (vol < .0002) return;
-  const t = a.currentTime + delay, buf = a.createBuffer(1, Math.ceil(a.sampleRate * dur), a.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-  const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
-  src.buffer = buf; f.type = 'bandpass'; f.frequency.value = freq;
+  vol = loud(vol);
+  if (!a || vol < .0002) return;
+  const t = a.currentTime + delay, src = noiseSource(a, dur), g = a.createGain();
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
-  src.connect(f).connect(g).connect(a.destination); src.start(t);
+  src.connect(bandpass(a, freq, 1)).connect(g).connect(bus); src.start(t);
 }
+// A spoken syllable: a voice buzz shaped by two "mouth" resonances (formants) into a soft vowel.
+const SYL_GAIN = 4, SYL_Q = 2;
+// How loud a pitch comes out through a vowel's resonances (some notes hit them, some miss).
+// Used to even syllables out; deskbuddy.py has the same formula so the PC sounds identical.
+function vowelLoudness(f, F1, F2, wave) {
+  let sum = 0;
+  for (let k = 1; k < 40 && k * f <= 11000; k++) {
+    const amp = wave === 'sawtooth' ? 2 / (Math.PI * k) : wave === 'sine' ? (k === 1 ? 1 : 0) : (k % 2 ? 8 / (Math.PI * Math.PI * k * k) : 0);
+    if (!amp) continue;
+    const h = fc => 1 / Math.sqrt(1 + SYL_Q * SYL_Q * Math.pow(k * f / fc - fc / (k * f), 2));
+    const m = h(F1) + .6 * h(F2);
+    sum += amp * amp * m * m / 2;
+  }
+  return Math.sqrt(sum);
+}
+function playSyl({ f0, f1, dur, vol, delay, F1, F2, wave, breath, vib }) {
+  const a = audio();
+  vol = loud(vol);
+  if (!a || vol < .0002) return;
+  const t = a.currentTime + delay, o = a.createOscillator(), g = a.createGain(), second = a.createGain();
+  o.type = wave;
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  if (vib) wobble(a, t, dur, vib, f0 * .05, o.frequency);
+  second.gain.value = .6;
+  o.connect(bandpass(a, F1, SYL_Q)).connect(g);
+  o.connect(bandpass(a, F2, SYL_Q)).connect(second).connect(g);
+  if (breath) {   // a little air in the voice
+    const n = noiseSource(a, dur), ng = a.createGain();
+    ng.gain.value = breath * 6;
+    n.connect(bandpass(a, F2, 2)).connect(ng).connect(g); n.start(t);
+  }
+  const peak = vol * SYL_GAIN * clamp(.3 / vowelLoudness((f0 + f1) / 2, F1, F2, wave), .4, 3);
+  g.gain.setValueAtTime(.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t + .015);
+  g.gain.exponentialRampToValueAtTime(peak * .5, t + dur * .7);
+  g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  g.connect(bus);
+  o.start(t); o.stop(t + dur + .05);
+}
+
+// Mouth shapes (formant frequencies) for its vowels, a little higher than a person's: it's small.
+const VOWELS = { a: [900, 1500], e: [600, 2200], i: [380, 2700], o: [600, 1050], u: [420, 950] };
+// Each personality has its own voice.
+const VOICES = {
+  cheerful: { pitch: 470, swing: 1.3,  speed: 1,   wave: 'triangle', breath: .02, vol: .075, vowels: 'aeiao' },
+  shy:      { pitch: 560, swing: 1.12, speed: .8,  wave: 'triangle', breath: .07, vol: .045, vowels: 'iue' },
+  hyper:    { pitch: 640, swing: 1.55, speed: 1.6, wave: 'triangle', breath: .01, vol: .075, vowels: 'aeiai' },
+  sleepy:   { pitch: 300, swing: 1.08, speed: .6,  wave: 'triangle', breath: .05, vol: .06,  vowels: 'aou' },
+  grumpy:   { pitch: 210, swing: 1.15, speed: 1.1, wave: 'sawtooth', breath: .02, vol: .05,  vowels: 'ouo' },
+};
+// How the pitch moves across a phrase, for each feeling (p goes 0 → 1 through the phrase).
+const CONTOURS = {
+  happy:    p => 1 + .16 * Math.sin(p * Math.PI * 2.5),
+  excited:  p => 1.1 + .22 * p + .1 * Math.sin(p * 9),
+  question: p => .95 + .4 * Math.pow(p, 2.5),
+  curious:  p => .9 + .3 * p,
+  sad:      p => 1.04 - .32 * p,
+  calm:     p => 1 - .08 * p,
+  grumpy:   p => .96 - .2 * p,
+};
+function voice() {
+  const v = { ...VOICES[state.buddy && state.buddy.personality] || VOICES.cheerful }, lv = friendship();
+  v.vol *= .8 + lv * .06;                    // shy and quiet at first, warmer as you become friends
+  v.swing = 1 + (v.swing - 1) * (.8 + lv * .08);
+  return v;
+}
+
+// Babble a phrase: n syllables whose melody follows the feeling.
+function speak(n, feeling = 'happy', { vowels, speed = 1, pitch = 1, vol = 1, delay = 0, vib = 0 } = {}) {
+  const v = voice(), shape = CONTOURS[feeling] || CONTOURS.happy;
+  n = clamp(Math.round(n), 1, 10);
+  if (friendship() === 1 && n > 2) n = Math.round(n * .7);   // a bit hesitant with someone new
+  let t = delay;
+  for (let i = 0; i < n; i++) {
+    const p = n === 1 ? 1 : i / (n - 1), last = i === n - 1;
+    const f = v.pitch * pitch * (1 + (shape(p) - 1) * v.swing) * (1 + (Math.random() - .5) * .06);
+    const glide = last ? (feeling === 'question' || feeling === 'curious' ? 1.28 : feeling === 'sad' ? .85 : 1.04) : 1 + (Math.random() - .5) * .08;
+    const dur = (.085 + Math.random() * .05) / (v.speed * speed) * (last ? 1.6 : 1);
+    syllable(f, f * glide, dur, pick(vowels || v.vowels), { vol: v.vol * vol, delay: t, wave: v.wave, breath: v.breath, vib });
+    t += dur + (.025 + Math.random() * .03) / (v.speed * speed);
+    if (friendship() === 1 && Math.random() < .2) t += .12;   // little hesitations
+  }
+  if (state.buddy && state.buddy.personality === 'grumpy' && feeling !== 'happy' && Math.random() < .5) noise(.1, .02, 600, t);
+  return t;
+}
+const wordsIn = html => html.replace(/<[^>]+>/g, ' ').replace(/[^\p{L}\p{N}\s']/gu, ' ').trim().split(/\s+/).filter(Boolean).length;
+
+// A music-box pluck: the gentle "bell" behind reminders, mail and the morning tune.
+const pluck = (f, delay = 0, vol = .06, dur = 1.2) => {
+  tone(f, f, dur, { vol, delay, att: .004 });
+  tone(f * 2.01, f * 2.01, dur * .45, { vol: vol * .18, delay, att: .004 });
+};
 const sfx = {
-  chirp:    () => { tone(700, 1100, .07); tone(900, 1400, .09, { delay: .08 }); },
-  giggle:   () => { for (let i = 0; i < 4; i++) tone(950 + Math.random() * 250, 1450, .05, { delay: i * .08, vol: .08 }); },
-  laugh:    () => { for (let i = 0; i < 10; i++) tone(1000 + Math.random() * 300, 1500 - i * 30, .05, { delay: i * .09, vol: .08 }); },
-  hmph:     () => { tone(260, 170, .2, { type: 'square', vol: .035 }); noise(.12, .05, 700); },
-  purr:     () => tone(90, 85, .45, { type: 'sawtooth', vol: .03, trem: 24 }),
-  curious:  () => tone(480, 900, .2, { vol: .1 }),
-  hmm:      () => { tone(420, 540, .12, { vol: .08 }); tone(540, 380, .18, { delay: .14, vol: .08 }); },
-  sad:      () => tone(520, 290, .45, { type: 'triangle', vol: .09 }),
-  surprise: () => tone(380, 1300, .14, { vol: .11 }),
-  yawn:     () => tone(520, 200, .9, { type: 'triangle', vol: .07, vib: 5 }),
-  ah:       h => tone(300 * h, 460 * h, .35, { type: 'triangle', vol: .06 }),
-  achoo:    () => { noise(.28, .2, 2600); tone(900, 280, .16, { type: 'square', vol: .04 }); },
-  hic:      () => tone(650, 1150, .05, { type: 'square', vol: .045 }),
-  note:     f => tone(f, f * 1.01, .32, { type: 'triangle', vol: .07, vib: 6 }),
-  dizzy:    () => tone(720, 240, 1.1, { vol: .08, vib: 9 }),
-  snore:    () => { tone(110, 150, 1, { type: 'sawtooth', vol: .012 }); noise(1, .012, 450); },
-  morning:  () => [523, 659, 784, 1047].forEach((f, i) => tone(f, f, .16, { delay: i * .11, vol: .08, type: 'triangle' })),
-  ding:     () => { tone(1320, 1320, .14, { vol: .09 }); tone(1760, 1760, .3, { delay: .13, vol: .09 }); },
-  bell:     () => [0, .22, .44].forEach(d => tone(1568, 1568, .2, { delay: d, vol: .08, type: 'triangle' })),
-  page:     () => noise(.18, .025, 3000),
+  chirp:    () => speak(2, 'happy'),
+  question: () => speak(2, 'question'),
+  giggle:   () => speak(4, 'excited', { vowels: 'ie', speed: 1.7, pitch: 1.25, vol: .8 }),
+  laugh:    () => speak(9, 'excited', { vowels: 'ae', speed: 1.6, pitch: 1.2, vol: .8 }),
+  hmph:     () => { speak(1, 'grumpy', { vowels: 'u', pitch: .75 }); noise(.12, .02, 600); },
+  purr:     () => { const p = voice().pitch * .5; tone(p, p * 1.02, .55, { vol: .03, trem: 9, lp: 700 }); },
+  curious:  () => speak(1, 'curious', { vowels: 'u', speed: .7 }),
+  hmm:      () => speak(2, 'calm', { vowels: 'u', pitch: .85, speed: .8 }),
+  sad:      () => speak(2, 'sad', { vowels: 'ao', speed: .7 }),
+  surprise: () => speak(1, 'question', { vowels: 'o', pitch: 1.2, speed: 1.3 }),
+  yawn:     () => { const p = voice().pitch; syllable(p * 1.1, p * .55, 1, 'a', { vol: .06, breath: .08 }); },
+  ah:       h => { const p = voice().pitch; syllable(p * h, p * h * 1.3, .38, 'a', { vol: .05, breath: .05 }); },
+  achoo:    () => { noise(.22, .1, 2200); syllable(voice().pitch * 1.3, voice().pitch * .8, .16, 'u', { vol: .05, delay: .03 }); },
+  hic:      () => syllable(voice().pitch * 1.5, voice().pitch * 1.8, .06, 'i', { vol: .05 }),
+  note:     f => pluck(f, 0, .05, .9),
+  dizzy:    () => speak(4, 'sad', { vowels: 'ou', speed: .75, vib: 7 }),
+  snore:    () => { noise(1.1, .012, 380); const p = voice().pitch * .4; tone(p, p * 1.15, 1, { vol: .012, lp: 500 }); },
+  morning:  () => [523, 659, 784, 1047].forEach((f, i) => pluck(f, i * .13, .05)),
+  ding:     () => { tone(900, 1300, .06, { vol: .05, att: .002 }); pluck(1319, .07, .05); pluck(1760, .22, .05); },
+  bell:     () => [1568, 1760, 2093, 2349, 2637].forEach(f => pluck(f, Math.random() * .8, .035, 1.6)),   // wind chime
+  page:     () => noise(.22, .012, 2400),
 };
 
 // ---------- connection to the PC ----------
@@ -227,7 +346,7 @@ let lastMsg = -1e9, lastMove = -1e9, cpuS = 0, px = 0, py = 0;
 let spin = 0, lastAng = null;                       // for "spin the mouse and it gets dizzy"
 let audioAvg = 0, musicSince = 0, lastBeat = 0;     // for dancing to music
 const trait = () => TRAITS[state.buddy && state.buddy.personality] || TRAITS.cheerful;
-const level = () => (state.buddy && state.buddy.level) || 1;
+const friendship = () => (state.buddy && state.buddy.level) || 1;
 
 function onState(s) {
   const now = performance.now(), vx = s.x - px, vy = s.y - py;
@@ -275,6 +394,15 @@ if (DEMO) {
   addEventListener('message', e => {
     const d = e.data || {}, now = performance.now();
     if (typeof d.x === 'number') demo = { x: clamp(d.x, -1, 1), y: clamp(d.y, -1, 1) };
+    if (d.voice && VOICES[d.voice]) {   // dashboard voice preview: say hello in that personality's voice
+      cancelQuirk(); audio();
+      demoBuddy.personality = d.voice; state.buddy = demoBuddy;
+      setOverride(d.voice === 'shy' ? 'bashful' : d.voice === 'grumpy' ? 'grumpy' : d.voice === 'sleepy' ? 'sleepy' : 'happy', 2600);
+      bounceV = -3 * trait().bounce;
+      speak(5, d.voice === 'grumpy' ? 'grumpy' : d.voice === 'sleepy' ? 'calm' : 'happy');
+      speak(3, 'question', { delay: 1.5 });
+      return;
+    }
     if (!d.mood) return;
     cancelQuirk();
     if (d.mood === 'dizzy') getDizzy();
@@ -286,7 +414,7 @@ if (DEMO) {
     else if (QUIRKS[d.mood]) QUIRKS[d.mood]();
     else if (MOODS[d.mood]) {
       setOverride(d.mood, 5000); bounceV = -2.5;
-      if (DEMO_LINES[d.mood]) say(DEMO_LINES[d.mood], 2500);
+      if (DEMO_LINES[d.mood]) say(DEMO_LINES[d.mood], 2500, false);
       const voice = { happy: 'chirp', love: 'chirp', giggle: 'giggle', content: 'purr', grumpy: 'hmph', curious: 'curious',
                       suspicious: 'hmm', stressed: 'sad', lost: 'sad', surprised: 'surprise', sleepy: 'yawn', drowsy: 'yawn',
                       sleeping: 'snore', groove: 'chirp', bashful: 'giggle' }[d.mood];
@@ -308,13 +436,19 @@ if (DEMO) {
 // ---------- speech bubble (used sparingly - it mostly talks with its face) ----------
 const bubble = $('bubble');
 let bubbleTimer = 0;
-function say(html, ms) {
+// It "says" the bubble out loud in buddy-speak: about one syllable per word, with the melody of the
+// feeling (a question rises at the end). Pass feeling = false when another sound already covers it.
+function say(html, ms, feeling) {
   bubble.innerHTML = html;
   bubble.classList.add('show');
   clearTimeout(bubbleTimer);
   if (ms > 0) bubbleTimer = setTimeout(() => reminding ? showReminder() : bubble.classList.remove('show'), ms);
+  if (feeling !== false) {
+    const text = html.replace(/<small>.*?<\/small>/g, '');
+    speak(Math.min(8, Math.max(1, Math.ceil(wordsIn(text) * .8))), feeling || (text.includes('?') ? 'question' : 'happy'));
+  }
 }
-const showReminder = () => say(`You've been working ${Math.floor(state.work)} min!<br>Stretch &amp; drink some water 💧<br><small>tap me when done</small>`, 0);
+const showReminder = (aloud = false) => say(`You've been working ${Math.floor(state.work)} min!<br>Stretch &amp; drink some water 💧<br><small>tap me when done</small>`, 0, aloud ? 'calm' : false);
 
 // ---------- mood brain ----------
 let baseMood = 'neutral', mood = 'neutral', override = null, reminding = false, breakAck = 0;
@@ -332,22 +466,22 @@ const overridden = (m, now = performance.now()) => override && now < override.un
 const lateNight = () => new Date().getHours() < 5;
 
 function onMoodChange(prev, m, now) {
-  if (prev === 'focused' && m !== 'focused' && m !== 'sleepy' && m !== 'sleeping' && focusSince && now - focusSince > 25 * 60000 && level() >= 4) {
-    QUIRKS.celebrate(); say(`Great focus session! 🎉<br><small>${Math.round((now - focusSince) / 60000)} minutes</small>`, 3500);
+  if (prev === 'focused' && m !== 'focused' && m !== 'sleepy' && m !== 'sleeping' && focusSince && now - focusSince > 25 * 60000 && friendship() >= 4) {
+    QUIRKS.celebrate(); say(`Great focus session! 🎉<br><small>${Math.round((now - focusSince) / 60000)} minutes</small>`, 3500, false);
   }
   focusSince = m === 'focused' ? now : 0;
   if (m === 'reading') { readStart = now; sfx.hmm(); }
 
-  if (prev === 'lost' && m !== 'lost') { setOverride('happy', 1500); sfx.chirp(); say('Connected! Hi there 👋', 2500); greetAfter = now + 2600; }
+  if (prev === 'lost' && m !== 'lost') { setOverride('happy', 1500); say('Connected! Hi there 👋', 2500, 'happy'); greetAfter = now + 2600; }
   else if (prev === 'sleeping' && m !== 'lost') {
-    if (level() >= 2) { QUIRKS.wave(); say("You're back! 👋", 2500); }
-    else { setOverride('surprised', 1500); sfx.surprise(); say("Oh! You're back! 👋", 2500); }
+    if (friendship() >= 2) { QUIRKS.wave(); say("You're back! 👋", 2500, false); }
+    else { setOverride('surprised', 1500); say("Oh! You're back! 👋", 2500, 'excited'); }
   }
-  else if (m === 'lost') { sfx.sad(); say('Looking for your PC…<br><small>is Desk Buddy running?</small>', 0); }
+  else if (m === 'lost') say('Looking for your PC…<br><small>is Desk Buddy running?</small>', 0, 'sad');
   else if (m === 'sleepy') sfx.yawn();
   else if (m === 'meeting' && rateOk('meet', 600000)) say('🤫 Shh… meeting mode', 2500);
-  else if (m === 'stressed' && rateOk('cpu', 60000)) { sfx.sad(); say(`Phew… CPU at ${Math.round(cpuS)}% 🥵`, 3000); }
-  else if (m === 'suspicious' && rateOk('fun', 180000)) { sfx.hmm(); say(pick(FUN_LINES), 3000); }
+  else if (m === 'stressed' && rateOk('cpu', 60000)) say(`Phew… CPU at ${Math.round(cpuS)}% 🥵`, 3000, 'sad');
+  else if (m === 'suspicious' && rateOk('fun', 180000)) say(pick(FUN_LINES), 3000);
 }
 
 // The first time it sees you each day: a stretch and a hello (and a proper reunion after days apart).
@@ -362,14 +496,16 @@ function checkGreeting(now) {
   if (!store.get('introduced') && b.days === 0) {
     store.set('introduced', '1');
     if (trait().shy) setOverride('bashful', 1500); else QUIRKS.stretch();
-    say(`Hi! I'm <b>${esc(b.name)}</b> 🤖<br><small>Nice to meet you!</small>`, 4000);
+    say(`Hi! I'm <b>${esc(b.name)}</b> 🤖<br><small>Nice to meet you!</small>`, 4000, false);
+    speak(5, 'happy', { delay: 1.9 });   // introduces itself once it has stretched
   } else if (b.awayDays >= 3) {
     cancelQuirk(); setOverride('sulk', 2200); sfx.hmph();   // a little huffy first...
-    play([[2200, () => { setOverride('love', 3000); sfx.laugh(); bounceV = -5; say('I missed you so much!! 💕' + plan, 4000); }]]);
+    play([[2200, () => { setOverride('love', 3000); sfx.laugh(); bounceV = -5; say('I missed you so much!! 💕' + plan, 4000, false); }]]);
   } else {
     const h = new Date().getHours();
     if (trait().shy) { setOverride('bashful', 1200); play([[1200, () => QUIRKS.stretch()]]); } else QUIRKS.stretch();
-    say((h < 12 ? 'Good morning! ☀️' : h < 17 ? 'Good afternoon! 🌤️' : 'Good evening! 🌙') + plan, 3500);
+    say((h < 12 ? 'Good morning! ☀️' : h < 17 ? 'Good afternoon! 🌤️' : 'Good evening! 🌙') + plan, 3500, false);
+    speak(3, 'happy', { delay: 1.9 });
   }
   store.set('introduced', '1');
 }
@@ -382,7 +518,7 @@ function checkMedia(now) {
   if (!P('music')) { wasPlaying = playing; song = key; return; }
   if (playing && m.title && key !== song) {           // a new song started
     song = key; cancelQuirk(); setOverride('happy', 900); sfx.chirp();
-    say(`🎵 <b>${esc(m.title)}</b>${m.artist ? `<br><small>${esc(m.artist)}</small>` : ''}`, 3500);
+    say(`🎵 <b>${esc(m.title)}</b>${m.artist ? `<br><small>${esc(m.artist)}</small>` : ''}`, 3500, false);
   } else if (wasPlaying && !playing && key === song) { // paused
     setOverride('aww', 1600); sfx.sad();
   } else if (!wasPlaying && playing && key === song) { // resumed
@@ -393,7 +529,8 @@ function checkMedia(now) {
 function announceMail(m) {
   cancelQuirk(); setOverride('surprised', 700); play([[700, () => setOverride('happy', 1500)]]);
   bounceV = -4 * trait().bounce; sfx.ding(); showIcon('✉️', 3500);
-  say(`📧 ${m.count > 1 ? `${m.count} new emails · latest from` : 'New email from'} <b>${esc(m.latest.from)}</b><br><small>${esc(m.latest.subject)}</small>`, 6000);
+  say(`📧 ${m.count > 1 ? `${m.count} new emails · latest from` : 'New email from'} <b>${esc(m.latest.from)}</b><br><small>${esc(m.latest.subject)}</small>`, 6000, false);
+  speak(3, 'excited', { delay: .55 });   // "you've got mail!"
 }
 function checkMail() {
   const m = state.mail;
@@ -403,7 +540,8 @@ function checkMail() {
 }
 function remind(html, now) {
   cancelQuirk(); setOverride(now ? 'surprised' : 'curious', 1500); bounceV = -4;
-  sfx.bell(); showIcon('🔔', 3500); say(html, 7000);
+  sfx.bell(); showIcon('🔔', 3500); say(html, 7000, false);
+  speak(4, 'calm', { delay: 1 });
 }
 function checkCalendar() {
   if (!P('calendarAlerts')) return;
@@ -421,7 +559,8 @@ function checkCalendar() {
 function levelUp(n) {
   cancelQuirk(); setOverride('love', 3500); sparkleUntil = performance.now() + 3500;
   sfx.morning(); play([200, 600, 1000, 1400].map(ms => [ms, () => bounceV = -4]));
-  say(`We're closer now! 💙<br><small>Friendship level ${n}: ${UNLOCKS[n] || ''}</small>`, 5500);
+  say(`We're closer now! 💙<br><small>Friendship level ${n}: ${UNLOCKS[n] || ''}</small>`, 5500, false);
+  speak(5, 'excited', { delay: .7 });
 }
 function checkBond() {
   const b = state.buddy;
@@ -432,8 +571,8 @@ function checkBond() {
   if (seen === null) store.set('milestone', milestone);          // a new phone: don't replay old milestones
   else if (milestone > +seen) {
     store.set('milestone', milestone);
-    setOverride('love', 3000); sparkleUntil = performance.now() + 3000; sfx.chirp();
-    say(`We've been friends for ${milestone} days 💙`, 4500);
+    setOverride('love', 3000); sparkleUntil = performance.now() + 3000;
+    say(`We've been friends for ${milestone} days 💙`, 4500, 'happy');
   }
 }
 const showIcon = (i, ms) => { icon = i; iconUntil = performance.now() + ms; };
@@ -459,14 +598,15 @@ function think(now) {
   // Break reminder. The PC resets "work" after 5 min away, which also counts as a break.
   if (state.work < breakAck) breakAck = 0;
   const due = P('breaks') && connected(now) && state.work - breakAck >= P('breakMinutes');
-  if (due && !reminding && m !== 'sleeping' && m !== 'sleepy' && m !== 'meeting') { reminding = true; sfx.chirp(); showReminder(); }
+  if (due && !reminding && m !== 'sleeping' && m !== 'sleepy' && m !== 'meeting') { reminding = true; showReminder(true); }
   if (!due && reminding) { reminding = false; bubble.classList.remove('show'); }
 
   const calm = (m === 'neutral' || m === 'drowsy' || m === 'focused') && !overridden() && !reminding && !touch && !quirkTimers.length;
   if (calm && P('bedtime') && lateNight() && state.idle < 60 && now > nextBedtime) {
     nextBedtime = now + 20 * 60000;
-    setOverride('sleepy', 2000); sfx.yawn(); say(pick(BED_LINES), 3500);
-  } else if (calm && level() >= 5 && now > nextGift) {   // best friends: a little heart, just because
+    setOverride('sleepy', 2000); sfx.yawn(); say(pick(BED_LINES), 3500, false);
+    speak(3, 'calm', { delay: 1.1, speed: .7 });
+  } else if (calm && friendship() >= 5 && now > nextGift) {   // best friends: a little heart, just because
     nextGift = now + (30 + Math.random() * 30) * 60000;
     setOverride('love', 2000); showIcon('💙', 2000); sfx.chirp();
   } else if (calm && P('quirks') && now > nextQuirk) {
@@ -825,10 +965,10 @@ function poke(x, y) {
   bounceV = -3.5 * t.bounce;
   if (reminding) {
     reminding = false; breakAck = state.work; tellPC('break');
-    setOverride('love', 2200); sfx.chirp(); say('Thanks! Your body says thank you too 💙', 2500);
+    setOverride('love', 2200); say('Thanks! Your body says thank you too 💙', 2500, 'happy');
   } else if (mood === 'sleeping') {
-    if (t.sleepy) { setOverride('grumpy', 2000); sfx.hmph(); say('Five more minutes… 😴', 2500); }
-    else { setOverride('surprised', 1200); sfx.surprise(); say('Huh?! I was just resting my eyes…', 2500); }
+    if (t.sleepy) { setOverride('grumpy', 2000); say('Five more minutes… 😴', 2500, 'grumpy'); }
+    else { setOverride('surprised', 1200); say('Huh?! I was just resting my eyes…', 2500, 'question'); }
   } else if (Math.hypot(x - tickleSpot.x * W, y - tickleSpot.y * H) < S * .45) {
     setOverride('giggle', 2600); sfx.laugh();   // found the tickle spot!
     play([300, 650, 1000, 1350, 1700].map(ms => [ms, () => bounceV = -4]));
@@ -839,7 +979,8 @@ function poke(x, y) {
     if (pokes.length >= t.grumpyAt) { pokes = []; grumpySide = Math.random() < .5 ? -1 : 1; setOverride('grumpy', 6000); sfx.hmph(); }
     else if (pokes.length >= t.grumpyAt - 2) { setOverride('surprised', 1000); sfx.hmm(); }
     else if (t.shy && Math.random() < .4) { grumpySide = Math.random() < .5 ? -1 : 1; setOverride('bashful', 1400); sfx.giggle(); }
-    else if (level() === 1 && Math.random() < .5) { setOverride('surprised', 900); sfx.surprise(); }   // still a bit jumpy with you
+    else if (friendship() === 1 && Math.random() < .5) { setOverride('surprised', 900); sfx.surprise(); }   // still a bit jumpy with you
+    else if (pokes.length === 2 && Math.random() < .5) { setOverride('curious', 900); sfx.question(); }   // "yes? what is it?"
     else { setOverride(Math.random() < .25 ? 'love' : 'giggle', 1300); sfx.giggle(); }
   }
 }
@@ -857,14 +998,14 @@ addEventListener('pointermove', e => {
   const now = performance.now(), d = Math.hypot(e.clientX - touch.lx, e.clientY - touch.ly);
   touch.lx = e.clientX; touch.ly = e.clientY; touch.dist += d;
   if (touch.dist < 25) return;
-  if (!touch.petting) { touch.petting = true; touch.petStart = now; }
+  if (!touch.petting) { touch.petting = true; touch.petStart = now; touch.lastPurr = now; sfx.hmm(); }   // "mm-hm"
   if (overridden('grumpy', now)) {   // petting makes up for the poking
     touch.forgive += d;
     if (touch.forgive > S * 2) { pokes = []; setOverride('love', 1800); sfx.chirp(); touch.forgive = -1e9; }
     return;
   }
   if (!overridden('love', now)) {
-    const dozing = level() >= 3 && now - touch.petStart > 4000;   // close friends doze off under your hand
+    const dozing = friendship() >= 3 && now - touch.petStart > 4000;   // close friends doze off under your hand
     setOverride(dozing ? 'dozy' : trait().sweet ? 'love' : 'content', 700);
   }
   if (now - touch.lastPurr > 450) { touch.lastPurr = now; sfx.purr(); }
@@ -894,8 +1035,8 @@ $('bond').addEventListener('pointerdown', e => {   // tap the 💙 to see your b
   const b = state.buddy;
   if (!b) return;
   const pips = '▰'.repeat(b.level) + '▱'.repeat(5 - b.level);
-  say(`<b>${esc(b.name)}</b> · ${PERSONALITY_NAMES[b.personality] || ''}<br><small>Friendship ${pips} level ${b.level} · ${b.days ? `${b.days} day${b.days > 1 ? 's' : ''} together` : 'met today'}</small>`, 4500);
-  setOverride('happy', 1200); sfx.chirp();
+  say(`<b>${esc(b.name)}</b> · ${PERSONALITY_NAMES[b.personality] || ''}<br><small>Friendship ${pips} level ${b.level} · ${b.days ? `${b.days} day${b.days > 1 ? 's' : ''} together` : 'met today'}</small>`, 4500, 'happy');
+  setOverride('happy', 1200);
 });
 showSound();
 setInterval(() => {

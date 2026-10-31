@@ -235,6 +235,14 @@
       </div>
       <p class="muted" style="margin:12px 0 0">Phones only allow sound after you've tapped the robot once. In meetings it always stays quiet.</p>
     </div>
+    <div class="card grid2" style="align-items:center">
+      <div>
+        <h2>Hear the voices</h2>
+        <p class="muted">Every personality talks differently, and its voice gets warmer as your friendship grows. Previews play here on this PC.</p>
+        <div class="row" id="voices" style="margin-top:12px"></div>
+      </div>
+      <div class="preview"><iframe class="robot" id="voiceRobot" title="Voice preview" allow="autoplay"></iframe></div>
+    </div>
   </section>
 
   <!-- PHONE -->
@@ -438,6 +446,8 @@ function renderAll() {
   const soundCards = SOUND.map(([k, e, t, d]) => `<button class="choice ${p.soundOutput === k ? 'on' : ''}" data-sound="${k}"><span class="em">${e}</span><b>${t}</b><small>${d}</small></button>`).join('');
   $('#soundChoices').innerHTML = $('#wSound').innerHTML = soundCards;
   $('#volume').value = p.volume; $('#volVal').textContent = p.volume + '%';
+  $('#voices').innerHTML = Object.entries(S.personalities).map(([k, v]) =>
+    `<button class="btn ${k === b.personality ? '' : 'ghost'}" data-voice="${k}">▶ ${v}</button>`).join('');
   $('#cSound').textContent = SOUND.find(s => s[0] === p.soundOutput).slice(1, 3).join(' ');
   $$('.qr').forEach(e => e.innerHTML = S.qr);
   $$('.url').forEach(e => e.textContent = S.phoneUrl);
@@ -508,6 +518,8 @@ document.addEventListener('click', async e => {
   if (s) { S.prefs.soundOutput = s.dataset.sound; renderAll(); await api('prefs', { soundOutput: s.dataset.sound }); }
   if (pers && pers.dataset.pers !== S.buddy.personality) { await api('buddy', { personality: pers.dataset.pers }); await load(); }
   if (test) api('test-sound', { where: test.dataset.test });
+  const v = e.target.closest('[data-voice]');
+  if (v) $('#voiceRobot').contentWindow.postMessage({ voice: v.dataset.voice }, '*');
 });
 $('#breakMinutes').addEventListener('input', e => $('#breakVal').textContent = e.target.value);
 $('#breakMinutes').addEventListener('change', e => api('prefs', { breakMinutes: +e.target.value }));

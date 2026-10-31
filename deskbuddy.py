@@ -401,47 +401,150 @@ def _osc(kind, phase):
     return math.sin(2 * math.pi * x)
 
 
+def _num(e, key, default, low, high):
+    try:
+        return min(max(float(e.get(key, default)), low), high)
+    except (TypeError, ValueError):
+        return default
+
+
+def _biquad(kind, freq, q):
+    """RBJ filter coefficients - the same filters Web Audio's BiquadFilterNode uses."""
+    w0 = 2 * math.pi * min(freq, SAMPLE_RATE / 2.2) / SAMPLE_RATE
+    alpha, cos = math.sin(w0) / (2 * q), math.cos(w0)
+    if kind == "lowpass":
+        b = ((1 - cos) / 2, 1 - cos, (1 - cos) / 2)
+    else:  # band-pass, 0 dB peak
+        b = (alpha, 0.0, -alpha)
+    a0 = 1 + alpha
+    return [x / a0 for x in b] + [-2 * cos / a0, (1 - alpha) / a0]
+
+
+def _filter(samples, coeffs):
+    b0, b1, b2, a1, a2 = coeffs
+    x1 = x2 = y1 = y2 = 0.0
+    out = []
+    for x in samples:
+        y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        x2, x1, y2, y1 = x1, x, y1, y
+        out.append(y)
+    return out
+
+
+def _ramp(a, b, frac):
+    """Exponential ramp from a to b, like Web Audio's exponentialRampToValueAtTime."""
+    return a * (b / a) ** frac
+
+
+def _source(e, dur, count):
+    """The raw oscillator (pitch glide + vibrato) shared by tones and syllables."""
+    f0, f1 = _num(e, "f0", 440, 20, 8000), _num(e, "f1", 440, 20, 8000)
+    kind, vib = e.get("type") or e.get("wave") or "sine", _num(e, "vib", 0, 0, 40)
+    phase, out = 0.0, []
+    for i in range(count):
+        t = i / SAMPLE_RATE
+        f = _ramp(f0, f1, t / dur)
+        if vib:
+            f += f0 * 0.05 * math.sin(2 * math.pi * vib * t)
+        phase += f / SAMPLE_RATE
+        out.append(_osc(kind, phase))
+    return out
+
+
+def _room(samples, wet=0.22):
+    """A small, soft room echo (Schroeder reverb), standing in for the phone's convolution reverb."""
+    tail = samples + [0.0] * int(0.9 * SAMPLE_RATE)
+    combs = [(int(SAMPLE_RATE * d), g) for d, g in ((0.0297, 0.77), (0.0371, 0.75), (0.0411, 0.73), (0.0437, 0.71))]
+    mixed = [0.0] * len(tail)
+    for delay, gain in combs:
+        buf, low = [0.0] * delay, 0.0
+        for i, x in enumerate(tail):
+            y = buf[i % delay]
+            low = y * 0.6 + low * 0.4   # damp the highs so the echo stays warm
+            buf[i % delay] = x + low * gain
+            mixed[i] += y
+    for delay, g in ((int(SAMPLE_RATE * 0.005), 0.7), (int(SAMPLE_RATE * 0.0017), 0.7)):
+        buf = [0.0] * delay
+        for i, x in enumerate(mixed):
+            y = buf[i % delay]
+            buf[i % delay] = x + y * g
+            mixed[i] = y - x * g
+    return [d + m * wet * 0.35 for d, m in zip(tail, mixed)]
+
+
+SYL_GAIN, SYL_Q = 4, 2
+
+
+def vowel_loudness(f, f1, f2, wave):
+    """Same as vowelLoudness() in face.html: evens out syllables whose pitch misses the vowel's resonances."""
+    total = 0.0
+    for k in range(1, 40):
+        if k * f > 11000:
+            break
+        if wave == "sawtooth":
+            amp = 2 / (math.pi * k)
+        elif wave == "sine":
+            amp = 1.0 if k == 1 else 0.0
+        else:
+            amp = 8 / (math.pi ** 2 * k * k) if k % 2 else 0.0
+        if amp:
+            h = lambda fc: 1 / math.sqrt(1 + SYL_Q ** 2 * (k * f / fc - fc / (k * f)) ** 2)
+            total += amp * amp * (h(f1) + 0.6 * h(f2)) ** 2 / 2
+    return math.sqrt(total)
+
+
 def render_sound(events, volume):
-    """Turn the phone's note list into samples (mirrors the Web Audio code in face.html)."""
-    events = [e for e in events[:40] if isinstance(e, dict)]
+    """Turn the phone's sound list into samples - mirrors playTone/playNoise/playSyl in face.html."""
+    events = [e for e in events[:60] if isinstance(e, dict)]
     if not events:
         return []
-    end = min(3.0, max(float(e.get("delay", 0)) + float(e.get("dur", 0)) for e in events) + 0.06)
+    end = min(4.0, max(_num(e, "delay", 0, 0, 4) + _num(e, "dur", 0.1, 0.01, 2.5) for e in events) + 0.06)
     out = [0.0] * int(end * SAMPLE_RATE)
     for e in events:
-        dur = min(max(float(e.get("dur", 0.1)), 0.01), 2.0)
-        vol = min(max(float(e.get("vol", 0.1)), 0.0001), 0.5)
-        start = int(float(e.get("delay", 0)) * SAMPLE_RATE)
-        count = min(int(dur * SAMPLE_RATE), len(out) - start)
-        attack = min(0.03, dur / 3)
-        if e.get("k") == "noise":
-            freq = min(float(e.get("freq", 1000)), SAMPLE_RATE / 2.2)
-            w0 = 2 * math.pi * freq / SAMPLE_RATE
-            alpha = math.sin(w0) / 2
-            b0, b2, a0, a1, a2 = alpha, -alpha, 1 + alpha, -2 * math.cos(w0), 1 - alpha
-            x1 = x2 = y1 = y2 = 0.0
-            for i in range(max(count, 0)):
-                x = random.uniform(-1, 1)
-                y = (b0 * x + b2 * x2 - a1 * y1 - a2 * y2) / a0   # band-pass filtered noise
-                x2, x1, y2, y1 = x1, x, y1, y
-                out[start + i] += y * vol * (0.0001 / vol) ** (i / count)
-            continue
-        f0 = min(max(float(e.get("f0", 440)), 20), 8000)
-        f1 = min(max(float(e.get("f1", f0)), 20), 8000)
-        kind, vib, trem = e.get("type", "sine"), float(e.get("vib", 0)), float(e.get("trem", 0))
-        phase = 0.0
-        for i in range(max(count, 0)):
-            t = i / SAMPLE_RATE
-            f = f0 * (f1 / f0) ** (t / dur)
-            if vib:
-                f += f0 * 0.05 * math.sin(2 * math.pi * vib * t)
-            phase += f / SAMPLE_RATE
-            env = 0.0001 * (vol / 0.0001) ** (t / attack) if t < attack else vol * (0.0001 / vol) ** ((t - attack) / (dur - attack))
-            if trem:
-                env += vol * 0.8 * math.sin(2 * math.pi * trem * t)
-            out[start + i] += _osc(kind, phase) * env
+        dur = _num(e, "dur", 0.1, 0.01, 2.5)
+        vol = _num(e, "vol", 0.1, 0.0001, 0.5)
+        start = int(_num(e, "delay", 0, 0, 4) * SAMPLE_RATE)
+        count = max(min(int(dur * SAMPLE_RATE), len(out) - start), 0)
+        kind = e.get("k")
+        if kind == "noise":
+            src = _filter([random.uniform(-1, 1) for _ in range(count)], _biquad("bandpass", _num(e, "freq", 1000, 50, 9000), 1))
+            for i, y in enumerate(src):
+                out[start + i] += y * _ramp(vol, 0.0001, i / count)
+        elif kind == "syl":
+            raw = _source(e, dur, count)
+            f1, f2 = _num(e, "F1", 700, 100, 5000), _num(e, "F2", 1500, 100, 6000)
+            voice = [a + 0.6 * b for a, b in zip(_filter(raw, _biquad("bandpass", f1, SYL_Q)), _filter(raw, _biquad("bandpass", f2, SYL_Q)))]
+            breath = _num(e, "breath", 0, 0, 0.5)
+            if breath:
+                air = _filter([random.uniform(-1, 1) for _ in range(count)], _biquad("bandpass", f2, 2))
+                voice = [v + a * breath * 6 for v, a in zip(voice, air)]
+            pitch = (_num(e, "f0", 440, 20, 8000) + _num(e, "f1", 440, 20, 8000)) / 2
+            wave = e.get("wave") or "triangle"
+            peak = vol * SYL_GAIN * min(3, max(0.4, 0.3 / max(vowel_loudness(pitch, f1, f2, wave), 1e-6)))
+            for i, y in enumerate(voice):
+                t = i / SAMPLE_RATE
+                if t < 0.015:
+                    env = _ramp(0.0001, peak, t / 0.015)
+                elif t < dur * 0.7:
+                    env = _ramp(peak, peak * 0.5, (t - 0.015) / (dur * 0.7 - 0.015))
+                else:
+                    env = _ramp(peak * 0.5, 0.0001, (t - dur * 0.7) / (dur * 0.3))
+                out[start + i] += y * env
+        else:  # tone
+            src = _source(e, dur, count)
+            lp = _num(e, "lp", 0, 0, 12000)
+            if lp:
+                src = _filter(src, _biquad("lowpass", lp, 0.707))
+            attack = _num(e, "att", 0, 0, 1) or min(0.03, dur / 3)
+            trem = _num(e, "trem", 0, 0, 60)
+            for i, y in enumerate(src):
+                t = i / SAMPLE_RATE
+                env = _ramp(0.0001, vol, t / attack) if t < attack else _ramp(vol, 0.0001, (t - attack) / (dur - attack))
+                if trem:
+                    env += vol * 0.8 * math.sin(2 * math.pi * trem * t)
+                out[start + i] += y * env
     gain = volume / 100 * 0.9
-    return [s * gain for s in out]
+    return [math.tanh(s * gain * 1.2) / 1.2 for s in _room(out)]   # tanh: gentle limiting, never harsh clipping
 
 
 def _mix(outdata, frames, _time, _status):
@@ -483,8 +586,10 @@ def play_on_pc(events):
     except Exception:
         pass   # no speakers available: stay silent
 
-CHIRP = [{"k": "tone", "f0": 700, "f1": 1100, "dur": .07, "vol": .12},
-         {"k": "tone", "f0": 900, "f1": 1400, "dur": .09, "vol": .12, "delay": .08}]
+CHIRP = [   # "hi-hi!" in buddy-speak, for the dashboard's Test on PC button
+    {"k": "syl", "f0": 470, "f1": 500, "dur": .12, "vol": .075, "F1": 900, "F2": 1500, "wave": "triangle", "breath": .02},
+    {"k": "syl", "f0": 560, "f1": 640, "dur": .19, "vol": .075, "F1": 600, "F2": 2200, "wave": "triangle", "breath": .02, "delay": .16},
+]
 
 
 def audio_loop():
