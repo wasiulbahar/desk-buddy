@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>All features · Desk Buddy</title>
+<meta name="description" content="Everything Desk Buddy can do: moods, touch, sounds, quirks, daily routines, the phone app and the Windows app.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14'/%3E%3Crect x='14' y='20' width='14' height='24' rx='5' fill='%235af0ff'/%3E%3Crect x='36' y='20' width='14' height='24' rx='5' fill='%235af0ff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05080b; --panel: #0b1218; --line: #17252e; --text: #d8eef2; --muted: #8aa3ab;
+    --cyan: #5af0ff;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Space Grotesk", system-ui, "Segoe UI", sans-serif; line-height: 1.6;
+    background-image: radial-gradient(circle at 70% 0%, rgba(90,240,255,.1), transparent 45%);
+  }
+  a { color: var(--cyan); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; color: var(--text); text-decoration: none; }
+  .logo i { width: 34px; height: 34px; border-radius: 9px; background: #000; display: flex; gap: 5px;
+            align-items: center; justify-content: center; box-shadow: 0 0 18px rgba(90,240,255,.3); }
+  .logo i::before, .logo i::after { content: ""; width: 7px; height: 12px; border-radius: 3px; background: var(--cyan); }
+  nav .links a { color: var(--muted); text-decoration: none; margin-left: 22px; font-size: 15px; }
+  nav .links a:hover, nav .links a.on { color: var(--text); }
+
+  header { padding: 30px 0 10px; }
+  h1 { font-size: clamp(34px, 5vw, 56px); line-height: 1.08; margin: 0 0 12px; letter-spacing: -.02em; }
+  h1 span { color: var(--cyan); text-shadow: 0 0 30px rgba(90,240,255,.45); }
+  .lead { font-size: 18px; color: var(--muted); max-width: 40em; margin: 0; }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0; }
+  .toc a { font-size: 14px; color: var(--text); text-decoration: none; background: var(--panel); border: 1px solid var(--line);
+           border-radius: 99px; padding: 6px 13px; }
+  .toc a:hover { border-color: var(--cyan); }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 44px; align-items: start; padding: 30px 0 40px; }
+  .stage { position: sticky; top: 20px; }
+  .phone { aspect-ratio: 2.05; background: #000; border: 9px solid #15191d; border-radius: 30px; overflow: hidden;
+           box-shadow: 0 0 0 1px #2a3138, 0 24px 60px rgba(0,0,0,.6), 0 0 70px rgba(90,240,255,.12); }
+  .phone iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .stage p { font-size: 14px; color: var(--muted); text-align: center; margin: 12px 0 0; }
+
+  section { padding: 26px 0 18px; scroll-margin-top: 20px; }
+  h2 { font-size: clamp(24px, 3vw, 32px); margin: 0 0 4px; display: flex; align-items: center; gap: 12px; }
+  h2 .em { font-size: .9em; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .feat { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center; padding: 16px 18px;
+          background: var(--panel); border: 1px solid var(--line); border-radius: 16px; margin-bottom: 10px; }
+  .feat h3 { margin: 0; font-size: 17px; }
+  .feat p { margin: 0; color: var(--muted); font-size: 15px; grid-column: 1; }
+  .feat button { grid-row: 1 / span 2; grid-column: 2; font: inherit; font-size: 14px; font-weight: 500; color: #00262c;
+                 background: var(--cyan); border: 0; border-radius: 10px; padding: 8px 14px; cursor: pointer; white-space: nowrap;
+                 transition: transform .15s, box-shadow .15s; }
+  .feat button:hover { transform: translateY(-1px); box-shadow: 0 4px 18px rgba(90,240,255,.35); }
+  .feat .how { grid-row: 1 / span 2; grid-column: 2; font-size: 13px; color: var(--muted); border: 1px dashed var(--line);
+               border-radius: 10px; padding: 6px 10px; white-space: nowrap; }
+  kbd { background: #111a20; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: .9em; font-family: inherit; }
+
+  .colors { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .color { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line);
+           border-radius: 14px; font-size: 15px; }
+  .color i { width: 18px; height: 26px; border-radius: 6px; flex: none; box-shadow: 0 0 12px currentColor; }
+  .color b { display: block; font-weight: 500; }
+  .color span { color: var(--muted); font-size: 13px; }
+
+  .cta { text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 24px; padding: 44px 24px; margin: 30px 0 0; }
+  .cta h2 { justify-content: center; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 24px; border-radius: 14px; font-weight: 700;
+         font-size: 17px; text-decoration: none; background: var(--cyan); color: #00262c; margin-top: 14px;
+         box-shadow: 0 6px 30px rgba(90,240,255,.35); }
+  footer { padding: 40px 0 60px; color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; gap: 0; padding-top: 16px; }
+    .stage { order: -1; top: 0; z-index: 5; background: var(--bg); padding: 10px 0 12px; margin: 0 -20px; padding-left: 20px; padding-right: 20px;
+             border-bottom: 1px solid var(--line); }
+    .phone { max-width: 360px; margin: 0 auto; border-width: 7px; border-radius: 22px; }
+    .stage p { display: none; }
+    section { scroll-margin-top: calc(min(360px, 100vw - 40px) / 2.05 + 40px); }   /* clear the pinned robot */
+    nav .links a:not(.keep) { display: none; }
+  }
+  @media (max-width: 520px) {
+    .feat { grid-template-columns: 1fr; }
+    .feat button, .feat .how { grid-row: auto; grid-column: 1; justify-self: start; margin-top: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="logo" href="./"><i></i>Desk Buddy</a>
+    <div class="links">
+      <a href="./">Home</a>
+      <a class="on keep" href="features.html">All features</a>
+      <a href="./#faq">FAQ</a>
+      <a class="keep" href="https://github.com/wasiulbahar/desk-buddy">GitHub</a>
+    </div>
+  </nav>
+
+  <header>
+    <h1>Everything your <span>Desk Buddy</span> can do</h1>
+    <p class="lead">A full tour of its moods, tricks and habits. Press <b>Try it</b> on any feature to watch the robot act it out, or play with it directly: drag across it to pet it and click to poke it.</p>
+    <div class="toc">
+      <a href="#watching">👀 Watching you</a>
+      <a href="#pc">🖥️ Reading your PC</a>
+      <a href="#touch">🤚 Touch</a>
+      <a href="#voice">🔊 Voice</a>
+      <a href="#quirks">🤧 Quirks</a>
+      <a href="#day">☀️ Your day</a>
+      <a href="#colors">🎨 Colors</a>
+      <a href="#phone">📱 Phone app</a>
+      <a href="#windows">💻 Windows app</a>
+      <a href="#privacy">🔒 Privacy</a>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div>
+      <section id="watching">
+        <h2><span class="em">👀</span>It watches you</h2>
+        <p class="sub">Its eyes are always paying attention.</p>
+        <div class="feat"><h3>Follows your cursor</h3><p>Its eyes track your mouse across every monitor in real time. The eye nearest where it's looking gets a little bigger, like it's turning its head.</p><span class="how">Move your mouse</span></div>
+        <div class="feat"><h3>Glances around</h3><p>When you stop moving the mouse, it looks around the room on its own and sometimes back at you.</p><span class="how">Just wait</span></div>
+        <div class="feat"><h3>Blinks naturally</h3><p>It blinks every few seconds at random, and sometimes does a quick double blink.</p><span class="how">Just wait</span></div>
+        <div class="feat"><h3>Random happy moments</h3><p>Every now and then, for no reason at all, it smiles and gives a little chirp.</p><button data-try="happy">Try it</button></div>
+      </section>
+
+      <section id="pc">
+        <h2><span class="em">🖥️</span>It reacts to your PC</h2>
+        <p class="sub">It notices what you're doing and turns it into feelings.</p>
+        <div class="feat"><h3>Focus mode 🤓</h3><p>When you're in VS Code, Visual Studio, PyCharm, IntelliJ, Android Studio, Sublime, Notepad++, Vim, a terminal, PowerShell, Figma, GitHub, Word, Excel or PowerPoint, its eyes narrow in concentration and follow your cursor more sharply.</p><button data-try="focused">Try it</button></div>
+        <div class="feat"><h3>Suspicious squint 👀</h3><p>On YouTube, Netflix, Twitch, Reddit, Instagram, TikTok, Facebook, Prime Video, Disney+ or 9GAG it turns purple and gives you a very suspicious look: "Hmm… is this work?"</p><button data-try="suspicious">Try it</button></div>
+        <div class="feat"><h3>Feels your CPU 🥵</h3><p>When your processor stays above 85%, it turns orange, looks worried, shakes a little and starts sweating.</p><button data-try="stressed">Try it</button></div>
+        <div class="feat"><h3>Dances to music 🎵</h3><p>When sound has been playing on your PC for a few seconds, it turns green, bobs to the beat, sways side to side, and floats music notes.</p><button data-try="groove">Try it</button></div>
+        <div class="feat"><h3>Gets dizzy 😵</h3><p>Spin your mouse in fast circles and its eyes turn into yellow spirals while its whole face wobbles. It needs a moment to recover.</p><button data-try="dizzy">Try it</button></div>
+      </section>
+
+      <section id="touch">
+        <h2><span class="em">🤚</span>Touch it like a pet</h2>
+        <p class="sub">It knows the difference between a poke, a stroke and a gentle touch.</p>
+        <div class="feat"><h3>Poke it</h3><p>A quick tap makes it giggle and bounce, sometimes with heart eyes.</p><button data-try="giggle">Try it</button></div>
+        <div class="feat"><h3>Pet it</h3><p>Slide your finger across the screen and it closes its eyes contentedly, blushes, purrs, and leans toward your finger.</p><button data-try="content">Try it</button></div>
+        <div class="feat"><h3>Don't overdo it 💢</h3><p>Poke it 6 times in a few seconds and it gets grumpy: it turns red, looks away and goes "hmph". Poking more just makes it turn the other way.</p><button data-try="grumpy">Try it</button></div>
+        <div class="feat"><h3>Make up with it</h3><p>While it's grumpy, pet it for a moment and it forgives you with heart eyes.</p><button data-try="love">Try it</button></div>
+        <div class="feat"><h3>Curious about your finger</h3><p>Hold a finger still on the screen and its eyes grow wide as it studies your finger. Let go and it chirps happily.</p><button data-try="curious">Try it</button></div>
+        <div class="feat"><h3>Secret tickle spot 😆</h3><p>There's a hidden spot in the lower part of the screen, in a new place every time. Find it and it laughs uncontrollably.</p><span class="how">Hunt for it below the eyes</span></div>
+        <div class="feat"><h3>Wake it up</h3><p>Tap it while it's asleep and it startles awake: "Huh?! I was just resting my eyes…"</p><button data-try="surprised">Try it</button></div>
+      </section>
+
+      <section id="voice">
+        <h2><span class="em">🔊</span>Its own little voice</h2>
+        <p class="sub">It talks in chirps and beeps, never words. They're made fresh every time, so they never sound exactly the same.</p>
+        <div class="feat"><h3>A sound for every feeling</h3><p>Happy chirps, giggles, a full laugh, a purr when petted, a curious "hm?", a suspicious "hmm", a grumpy "hmph", a sad sigh, a surprised squeak, yawns, a dizzy wobble, soft snores while asleep, and a little good-morning tune.</p><button data-try="giggle">Hear it</button></div>
+        <div class="feat"><h3>Mute button</h3><p>Tap 🔊 at the bottom of the screen to switch sound off or on. It remembers your choice. Phones only allow sound after your first tap.</p><span class="how">Tap 🔊</span></div>
+        <div class="feat"><h3>Few words</h3><p>It mostly speaks with its face. Speech bubbles only appear for things that matter, like reminders and greetings.</p><span class="how">Always on</span></div>
+      </section>
+
+      <section id="quirks">
+        <h2><span class="em">🤧</span>A life of its own</h2>
+        <p class="sub">When nothing much is happening, it does little things on its own, about every minute or two.</p>
+        <div class="feat"><h3>Sneezes</h3><p>"Ah… ah…" its eyes droop and look up, then ACHOO! It squeezes its eyes shut and jolts, then giggles at itself.</p><button data-try="sneeze">Try it</button></div>
+        <div class="feat"><h3>Hiccups</h3><p>A fit of four hiccups, each with a little jump and a surprised face, then relief.</p><button data-try="hiccup">Try it</button></div>
+        <div class="feat"><h3>Chases a fly</h3><p>A fly buzzes around the screen and its eyes follow it everywhere. It tries to catch it… and the fly zooms away.</p><button data-try="fly">Try it</button></div>
+        <div class="feat"><h3>Hums a tune</h3><p>It closes its eyes happily, sways side to side, and hums a little melody with notes floating up.</p><button data-try="hum">Try it</button></div>
+        <div class="feat"><h3>Nods off</h3><p>Its eyelids droop, it dozes for a second… then jerks awake, startled, and laughs it off.</p><button data-try="nodOff">Try it</button></div>
+      </section>
+
+      <section id="day">
+        <h2><span class="em">☀️</span>It knows your day</h2>
+        <p class="sub">It keeps track of when you're around and looks after you.</p>
+        <div class="feat"><h3>Good morning</h3><p>The first time it sees you each day, it stretches tall, then wide, and greets you with "Good morning! ☀️", "Good afternoon!" or "Good evening!" depending on the time.</p><button data-try="stretch">Try it</button></div>
+        <div class="feat"><h3>It missed you 💕</h3><p>If you've been away for more than two days, it greets you with heart eyes, a happy bounce and "I missed you so much!!"</p><button data-try="love">Try it</button></div>
+        <div class="feat"><h3>Gets sleepy when you're away</h3><p>After 2 minutes without mouse or keyboard input, it gets sleepy and yawns.</p><button data-try="sleepy">Try it</button></div>
+        <div class="feat"><h3>Falls asleep</h3><p>After 10 minutes away, its eyes close, it breathes slowly, snores softly, and Zzz's float up.</p><button data-try="sleeping">Try it</button></div>
+        <div class="feat"><h3>Wakes up happy</h3><p>When you come back, it wakes with a surprised face: "Oh! You're back! 👋"</p><button data-try="surprised">Try it</button></div>
+        <div class="feat"><h3>Break reminders 💧</h3><p>After 50 minutes of work, it reminds you to stretch and drink some water. Tap it when you're done and it thanks you. Stepping away for 5+ minutes also counts as a break. You can change the 50 minutes by adding <kbd>?break=25</kbd> to the phone link.</p><span class="how">After 50 min of work</span></div>
+        <div class="feat"><h3>Late-night bedtime nudges 🌙</h3><p>After midnight its eyes get droopy, and every 20 minutes it yawns and nudges you: "Bedtime soon? 😴"</p><button data-try="drowsy">Try it</button></div>
+      </section>
+
+      <section id="colors">
+        <h2><span class="em">🎨</span>What its colors mean</h2>
+        <p class="sub">Its eye color tells you how it feels at a glance.</p>
+        <div class="colors">
+          <div class="color"><i style="background:#5af0ff;color:#5af0ff"></i><div><b>Cyan</b><span>Normal, happy, focused</span></div></div>
+          <div class="color"><i style="background:#ff6eaf;color:#ff6eaf"></i><div><b>Pink</b><span>Love, heart eyes</span></div></div>
+          <div class="color"><i style="background:#78ffc8;color:#78ffc8"></i><div><b>Green</b><span>Dancing to music</span></div></div>
+          <div class="color"><i style="background:#be8cff;color:#be8cff"></i><div><b>Purple</b><span>Suspicious</span></div></div>
+          <div class="color"><i style="background:#ffaa46;color:#ffaa46"></i><div><b>Orange</b><span>Stressed, CPU is busy</span></div></div>
+          <div class="color"><i style="background:#ff785a;color:#ff785a"></i><div><b>Red</b><span>Grumpy</span></div></div>
+          <div class="color"><i style="background:#ffe16e;color:#ffe16e"></i><div><b>Yellow</b><span>Dizzy</span></div></div>
+          <div class="color"><i style="background:#46aadc;color:#46aadc"></i><div><b>Blue</b><span>Sleepy or asleep</span></div></div>
+          <div class="color"><i style="background:#5a6e82;color:#5a6e82"></i><div><b>Grey</b><span>Can't find your PC</span></div></div>
+        </div>
+      </section>
+
+      <section id="phone">
+        <h2><span class="em">📱</span>The phone side</h2>
+        <p class="sub">Your phone just needs a browser. No app store.</p>
+        <div class="feat"><h3>Fullscreen with one tap</h3><p>Tap the robot and it fills the whole screen and turns sideways. If you swipe out, the next tap brings it back.</p><span class="how">Tap the screen</span></div>
+        <div class="feat"><h3>Add to Home screen</h3><p>Install it from your browser menu and it gets its own robot icon and opens fullscreen like a real app. Updates arrive automatically, with no reinstalling.</p><span class="how">Browser menu</span></div>
+        <div class="feat"><h3>Little status bar</h3><p>A dim bar at the bottom shows the time, CPU and RAM usage, and how long you've been working. Double-tap to hide or show it.</p><span class="how">Double-tap</span></div>
+        <div class="feat"><h3>Can't find your PC</h3><p>If the connection drops, it turns grey, looks worried, shows a "?" and keeps looking. It reconnects by itself and says hi.</p><button data-try="lost">Try it</button></div>
+        <div class="feat"><h3>Works on any phone</h3><p>Android or iPhone, old or new. Anything with a modern browser on the same Wi-Fi.</p><span class="how">Any browser</span></div>
+      </section>
+
+      <section id="windows">
+        <h2><span class="em">💻</span>The Windows side</h2>
+        <p class="sub">One small program that sets itself up.</p>
+        <div class="feat"><h3>One-file install</h3><p>Download DeskBuddy.exe and double-click it. It installs itself, with no setup wizard and no Python needed. You can carry it to other PCs on a USB stick.</p><span class="how">Double-click</span></div>
+        <div class="feat"><h3>QR code pairing</h3><p>A page opens with a QR code. Scan it with your phone's camera to connect. The page shows "Phone connected!" the moment it works.</p><span class="how">Scan</span></div>
+        <div class="feat"><h3>Starts with Windows</h3><p>It runs quietly in the background every time you turn on your PC, so your buddy is always ready.</p><span class="how">Automatic</span></div>
+        <div class="feat"><h3>Tray icon</h3><p>A little robot sits by your clock. Right-click it for <b>Connect a phone</b> (shows the QR code again), <b>Start with Windows</b> on/off, <b>Uninstall</b> and <b>Quit</b>.</p><span class="how">Right-click</span></div>
+        <div class="feat"><h3>"Phone connected" notification</h3><p>Windows tells you when your phone connects.</p><span class="how">Automatic</span></div>
+        <div class="feat"><h3>Easy updates</h3><p>Run a newer DeskBuddy.exe and it replaces the old one by itself.</p><span class="how">Double-click</span></div>
+        <div class="feat"><h3>Clean uninstall</h3><p>Remove it from Windows <b>Settings → Apps</b> like any program, or from the tray menu. It removes everything it added.</p><span class="how">Settings → Apps</span></div>
+        <div class="feat"><h3>Light on your PC</h3><p>It only checks a few things each second and uses barely any CPU or memory.</p><span class="how">Always on</span></div>
+      </section>
+
+      <section id="privacy">
+        <h2><span class="em">🔒</span>Private by design</h2>
+        <p class="sub">Your buddy keeps your secrets.</p>
+        <div class="feat"><h3>Stays on your Wi-Fi</h3><p>Everything travels directly between your PC and your phone. There's no cloud, no account, no tracking, and nothing is ever sent to the internet.</p><span class="how">Always</span></div>
+        <div class="feat"><h3>Home networks only</h3><p>It only accepts connections on home or work networks, never on public Wi-Fi like cafés or airports.</p><span class="how">Always</span></div>
+        <div class="feat"><h3>Open source</h3><p>All of the code is public on GitHub, so anyone can check exactly what it does or build it themselves.</p><span class="how"><a href="https://github.com/wasiulbahar/desk-buddy">View code</a></span></div>
+      </section>
+
+      <div class="cta">
+        <h2>Ready to meet your buddy?</h2>
+        <p class="sub" style="margin:0">Free for Windows 10 and 11. Any phone works.</p>
+        <a class="btn" href="https://github.com/wasiulbahar/desk-buddy/releases/latest/download/DeskBuddy.exe">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16"/></svg>
+          Download DeskBuddy.exe
+        </a>
+      </div>
+    </div>
+
+    <aside class="stage">
+      <div class="phone"><iframe id="demo" src="face.html?demo" title="Desk Buddy live demo" allow="autoplay"></iframe></div>
+      <p>Press <b>Try it</b> on any feature, or pet and poke it right here.</p>
+    </aside>
+  </div>
+
+  <footer>
+    <span>Desk Buddy · made with 💙 and a spare phone</span>
+    <a href="https://github.com/wasiulbahar/desk-buddy">github.com/wasiulbahar/desk-buddy</a>
+  </footer>
+</div>
+
+<script>
+  const frame = document.getElementById('demo');
+  const send = msg => frame.contentWindow && frame.contentWindow.postMessage(msg, '*');
+
+  // The robot's eyes follow the mouse anywhere on the page.
+  addEventListener('pointermove', e => {
+    const r = frame.getBoundingClientRect();
+    send({ x: (e.clientX - (r.left + r.width / 2)) / (innerWidth / 2), y: (e.clientY - (r.top + r.height / 2)) / (innerHeight / 2) });
+  });
+
+  document.addEventListener('click', e => {
+    const b = e.target.closest('button[data-try]');
+    if (b) send({ mood: b.dataset.try });
+  });
+</script>
+</body>
+</html>

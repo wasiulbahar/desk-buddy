@@ -199,7 +199,14 @@ if (DEMO) {
     if (typeof d.x === 'number') demo = { x: clamp(d.x, -1, 1), y: clamp(d.y, -1, 1) };
     if (d.mood === 'dizzy') getDizzy();
     else if (d.mood && QUIRKS[d.mood]) { cancelQuirk(); QUIRKS[d.mood](); }
-    else if (d.mood && MOODS[d.mood]) { setOverride(d.mood, 5000); if (DEMO_LINES[d.mood]) say(DEMO_LINES[d.mood], 2500); }
+    else if (d.mood && MOODS[d.mood]) {
+      cancelQuirk(); setOverride(d.mood, 5000); bounceV = -2.5;
+      if (DEMO_LINES[d.mood]) say(DEMO_LINES[d.mood], 2500);
+      const voice = { happy: 'chirp', love: 'chirp', giggle: 'giggle', content: 'purr', grumpy: 'hmph', curious: 'curious',
+                      suspicious: 'hmm', stressed: 'sad', lost: 'sad', surprised: 'surprise', sleepy: 'yawn', drowsy: 'yawn',
+                      sleeping: 'snore', groove: 'chirp' }[d.mood];
+      if (voice) sfx[voice]();
+    }
   });
   addEventListener('pointermove', e => demo = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 });
   setInterval(() => onState({ ...demo, cpu: 12, ram: 45, idle: 0, title: '', work: 12, audio: 0 }), 66);

@@ -15,7 +15,7 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | Away for 2 / 10 minutes | Gets sleepy, then falls asleep 😴 |
 | You come back | Wakes up happy to see you 👋 |
 | 50 minutes without a break | Reminds you to stretch and drink water 💧 |
-| You stroke the screen | Purrs, blushes and leans into your finger 🫳 |
+| You stroke the screen | Purrs, blushes and leans into your finger 🤚 |
 | You tap the phone | Giggles and bounces 💕 (poke it too much and it sulks until you pet it) |
 | You hold a finger still | Gets curious about your finger 🤔 |
 | You find its secret tickle spot | Laughs uncontrollably 😆 |
