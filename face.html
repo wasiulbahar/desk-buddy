@@ -39,6 +39,21 @@
          background: rgba(255,255,255,.12); border-radius: 3px; overflow: hidden; }
   .bar i { display: block; height: 100%; width: 0; background: var(--eye); transition: width .8s; }
   #snd, #bond { pointer-events: auto; cursor: pointer; padding: 6px 10px; margin: -6px -10px; }
+  /* the hold menu */
+  #menu { position: fixed; inset: 0; display: none; background: rgba(0,0,0,.5); backdrop-filter: blur(3px); z-index: 5; }
+  #menu.on { display: block; }
+  .mbtn { position: absolute; width: 68px; height: 68px; margin: -34px 0 0 -34px; border-radius: 50%;
+          background: rgba(12,24,32,.94); border: 1.5px solid var(--eye); color: #e6fbff; font: inherit;
+          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer;
+          box-shadow: 0 0 18px rgba(90,240,255,.25); animation: pop .32s cubic-bezier(.2,1.6,.4,1) backwards; }
+  .mbtn span { font-size: 26px; line-height: 1; }
+  .mbtn small { font-size: 10px; opacity: .8; }
+  .mbtn.close { border-color: rgba(255,255,255,.35); }
+  @keyframes pop { from { transform: translate(var(--fx), var(--fy)) scale(.2); opacity: 0; } }
+  #toolx { position: fixed; top: max(12px, env(safe-area-inset-top)); right: 14px; width: 40px; height: 40px; border-radius: 50%;
+           border: 1px solid rgba(255,255,255,.25); background: rgba(10,20,26,.7); color: #cfe; font-size: 18px;
+           display: none; z-index: 4; cursor: pointer; }
+  #toolx.on { display: block; }
   #mailc:empty, #next:empty { display: none; }
   @media (max-width: 640px) { #hud .sys { display: none; } }
 </style>
@@ -46,6 +61,8 @@
 <body>
 <canvas id="c"></canvas>
 <div id="bubble"></div>
+<div id="menu"></div>
+<button id="toolx" title="Back to your buddy">✖</button>
 <div id="hud">
   <span id="clock">--:--</span>
   <span class="sys">CPU<span class="bar"><i id="cpu"></i></span></span>
@@ -54,6 +71,7 @@
   <span id="mailc"></span>
   <span id="next"></span>
   <span id="bond" title="Your buddy"></span>
+  <span id="running"></span>
   <span id="snd" title="Sound on/off">🔊</span>
 </div>
 <script>
@@ -403,6 +421,7 @@ if (DEMO) {
       speak(3, 'question', { delay: 1.5 });
       return;
     }
+    if ('tool' in d) { if (TOOLS[d.tool]) startTool(d.tool); else if (tool) endTool(); return; }   // website demo of the tools
     if (!d.mood) return;
     cancelQuirk();
     if (d.mood === 'dizzy') getDizzy();
@@ -601,7 +620,7 @@ function think(now) {
   if (due && !reminding && m !== 'sleeping' && m !== 'sleepy' && m !== 'meeting') { reminding = true; showReminder(true); }
   if (!due && reminding) { reminding = false; bubble.classList.remove('show'); }
 
-  const calm = (m === 'neutral' || m === 'drowsy' || m === 'focused') && !overridden() && !reminding && !touch && !quirkTimers.length;
+  const calm = (m === 'neutral' || m === 'drowsy' || m === 'focused') && !overridden() && !reminding && !touch && !quirkTimers.length && !tool && !menuOpen;
   if (calm && P('bedtime') && lateNight() && state.idle < 60 && now > nextBedtime) {
     nextBedtime = now + 20 * 60000;
     setOverride('sleepy', 2000); sfx.yawn(); say(pick(BED_LINES), 3500, false);
@@ -719,7 +738,7 @@ function resize() {
   updateGlow();
 }
 function updateGlow() {
-  const [r, g, b] = MOODS[mood].color;
+  const [r, g, b] = typeof tool !== 'undefined' && tool ? TOOLS[tool].color : MOODS[mood].color;
   cv.style.filter = `drop-shadow(0 0 ${Math.round(S * 0.07)}px rgba(${r},${g},${b},.75))`;
   document.documentElement.style.setProperty('--eye', `rgb(${r},${g},${b})`);
 }
@@ -885,6 +904,334 @@ function draw(now, blink) {
   }
 }
 
+// ---------- the hold menu: little tools, each with its own look ----------
+// Press and hold for 2 seconds (a ring fills around your finger), then pick a tool.
+const HOLD_MS = 2000;
+const TOOLS = {
+  timer:   { icon: '⏳', label: 'Timer',     color: [255, 205, 120], hint: 'Swipe ← → to pick · tap to start' },
+  clock:   { icon: '🕐', label: 'Clock',     color: [90, 240, 255],  hint: 'Tap me to hear the time' },
+  watch:   { icon: '⏱️', label: 'Stopwatch', color: [150, 255, 190], hint: 'Tap to start / stop · swipe to reset' },
+  pomo:    { icon: '🍅', label: 'Focus',     color: [255, 105, 85],  hint: 'Tap to start · swipe to skip ahead' },
+  breathe: { icon: '🌬️', label: 'Breathe',   color: [130, 230, 215], hint: 'Breathe along with me' },
+  dice:    { icon: '🎲', label: 'Dice',      color: [235, 240, 255], hint: 'Tap to roll · swipe for a coin' },
+};
+const TIMER_STEPS = [1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60];
+const BREATH = [['in', 4000], ['hold', 1500], ['out', 6000]], BREATH_CYCLE = 11500;
+let tool = null, menuOpen = false, lastBreath = '';
+const kit = {   // each tool's state; the timer, stopwatch and focus keep running when you leave them
+  timer: { minutes: +store.get('timerMin') || 5, end: 0, total: 0, pausedLeft: 0, done: false, alarmUntil: 0, nextRing: 0 },
+  watch: { start: 0, acc: 0 },
+  pomo:  { phase: 'focus', end: 0, total: 0, pausedLeft: 0, round: 1 },
+  breathe: { start: 0 },
+  dice:  { mode: 'dice', rollStart: -1e9, landed: true, faces: [3, 5], coin: 'heads' },
+};
+const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const timerLeft = () => { const t = kit.timer; return t.done ? 0 : t.end ? t.end - Date.now() : t.pausedLeft || t.minutes * 60000; };
+const pomoLeft = () => { const p = kit.pomo; return p.end ? p.end - Date.now() : p.pausedLeft || 25 * 60000; };
+const watchTime = () => kit.watch.acc + (kit.watch.start ? Date.now() - kit.watch.start : 0);
+
+const menu = $('menu');
+function openMenu(x, y) {
+  menuOpen = true; cancelQuirk(); override = null;
+  const items = Object.entries(TOOLS), R = Math.min(118, Math.min(W, H) * .32);
+  const cx = clamp(x, R + 44, W - R - 44), cy = clamp(y, R + 44, H - R - 44);
+  menu.innerHTML = items.map(([k, t], i) => {
+    const a = -Math.PI / 2 + i / items.length * Math.PI * 2, bx = cx + Math.cos(a) * R, by = cy + Math.sin(a) * R;
+    return `<button class="mbtn" data-tool="${k}" style="left:${bx}px;top:${by}px;--fx:${cx - bx}px;--fy:${cy - by}px;animation-delay:${i * 35}ms"><span>${t.icon}</span><small>${t.label}</small></button>`;
+  }).join('') + `<button class="mbtn close" data-tool="" style="left:${cx}px;top:${cy}px;--fx:0px;--fy:0px"><span>${tool ? '🙂' : '✖'}</span><small>${tool ? 'Buddy' : 'Close'}</small></button>`;
+  menu.classList.add('on');
+  pluck(988, 0, .04, .6); pluck(1319, .07, .04, .6);
+}
+function closeMenu() { menuOpen = false; menu.classList.remove('on'); }
+menu.addEventListener('click', e => {
+  const b = e.target.closest('[data-tool]');
+  closeMenu();
+  if (b) b.dataset.tool ? startTool(b.dataset.tool) : (tool ? endTool() : sfx.chirp());
+});
+
+function startTool(name) {
+  tool = name; cancelQuirk(); override = null;
+  $('toolx').classList.add('on'); updateGlow(); sfx.chirp();
+  if (name === 'breathe') { kit.breathe.start = performance.now(); lastBreath = ''; }
+  say(TOOLS[name].hint, 2800, false);
+}
+function endTool() {
+  tool = null; closeMenu();
+  $('toolx').classList.remove('on'); bubble.classList.remove('show');
+  updateGlow(); setOverride('happy', 900); sfx.chirp();
+}
+$('toolx').addEventListener('pointerdown', e => { e.stopPropagation(); endTool(); });
+
+// Taps and swipes while a tool is open.
+function toolGesture(dx, dy) {
+  if (dy > 90 && dy > Math.abs(dx)) return endTool();   // swipe down: back to the buddy
+  const swipe = Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) ? Math.sign(dx) : 0;
+  if (!swipe && Math.hypot(dx, dy) > 25) return;
+  const now = Date.now();
+  if (tool === 'timer') {
+    const t = kit.timer;
+    if (swipe && (t.end || t.pausedLeft || t.done)) { t.end = t.pausedLeft = 0; t.done = false; sfx.hmm(); }   // cancel
+    else if (swipe) {
+      const i = clamp(TIMER_STEPS.indexOf(t.minutes) + swipe, 0, TIMER_STEPS.length - 1);
+      t.minutes = TIMER_STEPS[i]; store.set('timerMin', t.minutes); pluck(523 + i * 60, 0, .04, .4);
+    } else if (t.done) { t.done = false; sfx.chirp(); }                                   // back to picking a time
+    else if (t.end) { t.pausedLeft = t.end - now; t.end = 0; sfx.hmm(); }            // pause
+    else if (t.pausedLeft) { t.end = now + t.pausedLeft; t.pausedLeft = 0; sfx.chirp(); }   // resume
+    else { t.done = false; t.total = t.minutes * 60000; t.end = now + t.total; sfx.chirp(); say(`⏳ ${t.minutes} min. Go!`, 1800, false); }
+  } else if (tool === 'watch') {
+    const w = kit.watch;
+    if (swipe) { w.start = 0; w.acc = 0; sfx.hmm(); }
+    else if (w.start) { w.acc += now - w.start; w.start = 0; pluck(880, 0, .04, .4); }
+    else { w.start = now; pluck(1175, 0, .04, .4); }
+  } else if (tool === 'pomo') {
+    const p = kit.pomo;
+    if (swipe) pomoNext();
+    else if (p.end) { p.pausedLeft = p.end - now; p.end = 0; sfx.hmm(); }
+    else if (p.pausedLeft) { p.end = now + p.pausedLeft; p.pausedLeft = 0; sfx.chirp(); }
+    else { pomoStart('focus'); say('🍅 25 minutes of focus. You got this!', 2500, 'calm'); }
+  } else if (tool === 'clock') {
+    say(`It's ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} 🕐`, 2200, 'happy');
+  } else if (tool === 'dice') {
+    const d = kit.dice;
+    if (swipe) { d.mode = d.mode === 'dice' ? 'coin' : 'dice'; d.landed = true; d.rollStart = -1e9; sfx.chirp(); }
+    else roll();
+  }
+}
+
+function pomoStart(phase) {
+  const p = kit.pomo;
+  p.phase = phase; p.pausedLeft = 0;
+  p.total = (phase === 'focus' ? 25 : p.round % 4 === 0 ? 15 : 5) * 60000;
+  p.end = Date.now() + p.total;
+}
+function pomoNext() {
+  const p = kit.pomo;
+  if (p.phase === 'focus') {
+    pomoStart('break'); sfx.morning();
+    say(`🍅 Break time! ${p.total / 60000} minutes. Stretch with me 🧘`, 4000, false);
+    if (!tool) QUIRKS.stretch();
+  } else {
+    p.round++; pomoStart('focus'); pluck(784, 0, .05); pluck(1047, .15, .05);
+    say('🍅 Back to focus. You got this!', 3000, 'calm');
+  }
+}
+
+function ring() {   // the timer's alarm: a bright music-box run and an excited "it's time!"
+  [784, 988, 1175, 1568].forEach((f, i) => pluck(f, i * .14, .06));
+  speak(3, 'excited', { delay: .7 });
+  bounceV = -5;
+}
+function timerDone() {
+  const t = kit.timer;
+  t.end = 0; t.pausedLeft = 0; t.done = true;
+  t.alarmUntil = performance.now() + 9000; t.nextRing = performance.now() + 3000;
+  cancelQuirk(); setOverride('surprised', 1200); showIcon('⏰', 3500);
+  say("⏰ Time's up!", 5000, false); ring();
+}
+
+function roll() {
+  const d = kit.dice;
+  d.rollStart = performance.now(); d.landed = false;
+  for (let i = 0; i < 7; i++) noise(.04, .025, 1800 + Math.random() * 900, i * .15);   // rattle
+}
+
+function breathState(now) {
+  const elapsed = now - kit.breathe.start, t = elapsed % BREATH_CYCLE;
+  let acc = 0;
+  for (const [name, len] of BREATH) {
+    if (t < acc + len) return { name, p: (t - acc) / len, cycle: Math.floor(elapsed / BREATH_CYCLE) };
+    acc += len;
+  }
+  return { name: 'out', p: 1, cycle: 0 };
+}
+
+// Runs every frame: alarms, focus phases, breathing sounds and dice landings.
+function toolTick(now) {
+  const t = kit.timer, p = kit.pomo, d = kit.dice;
+  if (t.end && Date.now() >= t.end) timerDone();
+  if (t.alarmUntil > now && now >= t.nextRing) { ring(); t.nextRing = now + 3000; }
+  if (p.end && Date.now() >= p.end) pomoNext();
+  if (tool === 'breathe') {
+    const b = breathState(now), key = b.cycle + b.name;
+    if (key !== lastBreath) {
+      lastBreath = key;
+      if (b.name === 'in') tone(196, 262, 4, { type: 'triangle', vol: .04, att: 1.6, lp: 700 });
+      if (b.name === 'out') {
+        tone(262, 175, 6, { type: 'triangle', vol: .035, att: .6, lp: 700 });
+        if (b.cycle === 4) say('Nice. Feeling calmer? 💙', 3000, 'calm');
+      }
+    }
+  }
+  if (!d.landed && now - d.rollStart > 1200) {
+    d.landed = true;
+    if (d.mode === 'dice') {
+      d.faces = [1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)];
+      if (tool === 'dice') say(`🎲 ${d.faces[0]} + ${d.faces[1]} = ${d.faces[0] + d.faces[1]}`, 2500, false);
+    } else {
+      d.coin = Math.random() < .5 ? 'heads' : 'tails';
+      if (tool === 'dice') say(d.coin === 'heads' ? '★ Heads!' : '☾ Tails!', 2500, false);
+    }
+    pluck(1047, 0, .05, .6); speak(2, 'excited', { delay: .25 });
+  }
+}
+
+// ----- drawing each tool -----
+function drawDial(x, y, blink, hands, color) {
+  const r = S * .45, ink = '#061015';
+  ctx.save(); ctx.translate(x, y); ctx.scale(1, Math.max(blink, .08));
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = ink; ctx.lineCap = 'round';
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * Math.PI * 2;
+    ctx.lineWidth = S * (i % 3 ? .018 : .035);
+    ctx.beginPath(); ctx.moveTo(Math.sin(a) * r * .78, -Math.cos(a) * r * .78); ctx.lineTo(Math.sin(a) * r * .9, -Math.cos(a) * r * .9); ctx.stroke();
+  }
+  for (const [turn, len, width] of hands) {
+    const a = turn * Math.PI * 2;
+    ctx.lineWidth = S * width;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.sin(a) * r * len, -Math.cos(a) * r * len); ctx.stroke();
+  }
+  ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(0, 0, S * .04, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+function drawHourglass(x, y, frac, flowing, now, color) {
+  const h = S * .95, w = S * .62, top = y - h / 2, bot = y + h / 2, cap = S * .07, neck = w * .09;
+  ctx.fillStyle = color;
+  roundRect(x - w / 2 - S * .05, top - cap, w + S * .1, cap, cap / 2); ctx.fill();
+  roundRect(x - w / 2 - S * .05, bot, w + S * .1, cap, cap / 2); ctx.fill();
+  const glass = () => {
+    ctx.beginPath(); ctx.moveTo(x - w / 2, top); ctx.lineTo(x + w / 2, top);
+    ctx.bezierCurveTo(x + w / 2, y - h * .18, x + neck, y - h * .08, x + neck, y);
+    ctx.bezierCurveTo(x + neck, y + h * .08, x + w / 2, y + h * .18, x + w / 2, bot);
+    ctx.lineTo(x - w / 2, bot);
+    ctx.bezierCurveTo(x - w / 2, y + h * .18, x - neck, y + h * .08, x - neck, y);
+    ctx.bezierCurveTo(x - neck, y - h * .08, x - w / 2, y - h * .18, x - w / 2, top);
+    ctx.closePath();
+  };
+  ctx.save(); glass(); ctx.clip();
+  ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(x - w, top, w * 2, h);
+  ctx.fillStyle = 'rgb(255,214,130)';   // the sand
+  const topH = h / 2 * .85 * frac, botH = h / 2 * .85 * (1 - frac);
+  ctx.fillRect(x - w, y - topH, w * 2, topH);
+  ctx.beginPath(); ctx.moveTo(x - w, bot); ctx.lineTo(x - w, bot - botH * .7);
+  ctx.quadraticCurveTo(x, bot - botH * 1.5, x + w, bot - botH * .7); ctx.lineTo(x + w, bot); ctx.fill();
+  if (flowing && frac > 0) {   // a thin stream with grains tumbling down it
+    const fall = h / 2 - botH * 1.1;
+    ctx.fillRect(x - S * .007, y, S * .014, fall);
+    for (let i = 0; i < 4; i++) {
+      const p = (now / 350 + i / 4) % 1;
+      ctx.beginPath(); ctx.arc(x + Math.sin(i * 7 + now / 90) * S * .012, y + p * fall, S * .013, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.restore();
+  ctx.strokeStyle = color; ctx.lineWidth = S * .03; glass(); ctx.stroke();
+}
+
+function drawDie(x, y, face, rot, color) {
+  const s = S * .74, pips = { 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]],
+                              5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] };
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.fillStyle = color; roundRect(-s / 2, -s / 2, s, s, s * .2); ctx.fill();
+  ctx.fillStyle = '#0a1820';
+  for (const [a, b] of pips[face]) { ctx.beginPath(); ctx.arc(a * s * .27, b * s * .27, s * .085, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
+
+function drawCoin(x, y, flip, side) {
+  const r = S * .42;
+  ctx.save(); ctx.translate(x, y); ctx.scale(Math.max(Math.abs(flip), .06), 1);
+  ctx.fillStyle = 'rgb(255,210,110)'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgb(200,150,60)'; ctx.lineWidth = S * .04; ctx.beginPath(); ctx.arc(0, 0, r * .8, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = 'rgb(150,105,35)'; ctx.font = `700 ${S * .38}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(side === 'heads' ? '★' : '☾', 0, S * .02);
+  ctx.restore();
+}
+
+function drawTool(now, blink) {
+  ctx.clearRect(0, 0, W, H);
+  const color = `rgb(${TOOLS[tool].color})`, gap = S * .72;
+  const cy = H / 2 + bounce * S * .5 - (hudOn ? S * .12 : 0), lx = W / 2 - gap, rx = W / 2 + gap, below = cy + S * .74;
+  const text = (s, y, size, alpha = 1) => {
+    ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.font = `600 ${size}px system-ui, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s, W / 2, y);
+    ctx.globalAlpha = 1; ctx.textBaseline = 'alphabetic';
+  };
+  if (tool === 'timer') {
+    const t = kit.timer, left = timerLeft(), total = t.end || t.pausedLeft ? t.total : t.minutes * 60000;
+    const frac = t.done ? 0 : clamp(left / total, 0, 1), shake = t.end && left < 10000 ? Math.sin(now / 40) * S * .015 : 0;
+    for (const x of [lx, rx]) drawHourglass(x + shake, cy, frac, !!t.end, now, color);
+    text(t.end || t.pausedLeft || t.done ? mmss(left) : `${t.minutes} min`, below + S * .05, S * .3);
+    text(t.pausedLeft ? 'paused · tap to resume' : t.end ? 'tap to pause · swipe to cancel' : t.done ? "time's up! swipe to reset" : '‹ swipe to change · tap to start ›', below + S * .34, S * .12, .6);
+  } else if (tool === 'clock') {
+    const d = new Date(), h = d.getHours() % 12 + d.getMinutes() / 60, m = d.getMinutes() + d.getSeconds() / 60;
+    const s = d.getSeconds() + d.getMilliseconds() / 1000;
+    drawDial(lx, cy, blink, [[h / 12, .5, .075]], color);
+    drawDial(rx, cy, blink, [[m / 60, .72, .06], [s / 60, .82, .022]], color);
+    text(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), below + S * .05, S * .26);
+  } else if (tool === 'watch') {
+    const w = kit.watch, ms = watchTime();
+    drawDial(lx, cy, blink, [[ms / 1000 % 60 / 60, .82, .03], [ms / 60000 % 60 / 60, .45, .06]], color);
+    ctx.fillStyle = color; roundRect(lx - S * .06, cy - S * .58, S * .12, S * .1, S * .02); ctx.fill();   // the button on top
+    const ew = S * .86, eh = S * .64;
+    roundRect(rx - ew / 2, cy - eh / 2, ew, eh * Math.max(blink, .1), S * .14); ctx.fill();
+    ctx.fillStyle = '#061015'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `700 ${S * .22}px ui-monospace, Consolas, monospace`;
+    ctx.fillText(`${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`, rx, cy - S * .05);
+    ctx.font = `600 ${S * .13}px ui-monospace, Consolas, monospace`;
+    ctx.fillText('.' + Math.floor(ms / 100) % 10, rx, cy + S * .17); ctx.textBaseline = 'alphabetic';
+    text(w.start ? 'tap to stop' : ms ? 'tap to continue · swipe to reset' : 'tap to start', below + S * .1, S * .13, .6);
+  } else if (tool === 'pomo') {
+    const p = kit.pomo, left = pomoLeft(), total = p.total || 25 * 60000, focus = p.phase === 'focus';
+    [lx, rx].forEach((x, i) => {
+      drawEye(x, cy, S * .78, S * (focus ? .82 : 1) * blink, focus ? .18 : 0, focus ? .2 : 0, focus ? 0 : .5, 0, i === 0, color);
+      ctx.fillStyle = 'rgb(120,220,110)';   // a little tomato leaf on each eye
+      const ly = cy - S * (focus ? .45 : .54);
+      ctx.beginPath(); ctx.ellipse(x - S * .07, ly, S * .09, S * .035, -.5, 0, Math.PI * 2); ctx.ellipse(x + S * .07, ly, S * .09, S * .035, .5, 0, Math.PI * 2); ctx.fill();
+    });
+    const bw = S * 2.3;
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; roundRect(W / 2 - bw / 2, below - S * .04, bw, S * .06, S * .03); ctx.fill();
+    ctx.fillStyle = color; roundRect(W / 2 - bw / 2, below - S * .04, bw * clamp(1 - left / total, .02, 1), S * .06, S * .03); ctx.fill();
+    text(`${focus ? 'Focus' : 'Break'} · ${mmss(left)}${p.round > 1 ? `  ·  round ${p.round}` : ''}`, below + S * .22, S * .19);
+    if (!p.end) text(p.pausedLeft ? 'paused · tap to resume' : 'tap to start 25 minutes of focus', below + S * .45, S * .12, .6);
+  } else if (tool === 'breathe') {
+    const b = breathState(now), ease = q => .5 - .5 * Math.cos(Math.PI * q);
+    const s = b.name === 'in' ? .75 + .4 * ease(b.p) : b.name === 'hold' ? 1.15 : 1.15 - .4 * ease(b.p);
+    [lx, rx].forEach((x, i) => drawEye(x, cy, S * .78 * s, S * s, 0, 0, b.name === 'out' ? .3 : 0, .35, i === 0, color));
+    text(b.name === 'in' ? 'Breathe in…' : b.name === 'hold' ? 'Hold…' : 'Breathe out…', below + S * .12, S * .2, .85);
+  } else if (tool === 'dice') {
+    const d = kit.dice, rolling = !d.landed;
+    if (d.mode === 'dice') {
+      [lx, rx].forEach((x, i) => drawDie(x, cy - (rolling ? Math.abs(Math.sin(now / 120 + i)) * S * .15 : 0),
+        rolling ? Math.floor(now / 80 + i * 3) % 6 + 1 : d.faces[i], rolling ? Math.sin(now / 60) * .5 * (i ? -1 : 1) : 0, color));
+      text(rolling ? '' : `${d.faces[0]} + ${d.faces[1]} = ${d.faces[0] + d.faces[1]}`, below + S * .05, S * .2);
+    } else {
+      const flip = rolling ? Math.cos(now / 45) : 1;
+      drawCoin(lx, cy - (rolling ? Math.sin((now - d.rollStart) / 1200 * Math.PI) * S * .35 : 0), flip,
+        rolling ? (flip > 0 ? 'heads' : 'tails') : d.coin);
+      drawEye(rx - S * .1, cy - (rolling ? S * .08 : 0), S * .78, S * blink, 0, 0, rolling ? 0 : .4, 0, false, 'rgb(90,240,255)');   // the other eye watches
+      text(rolling ? '' : d.coin === 'heads' ? 'Heads!' : 'Tails!', below + S * .05, S * .2);
+    }
+    text(rolling ? '' : d.mode === 'dice' ? 'tap to roll · swipe for a coin' : 'tap to flip · swipe for dice', below + S * .32, S * .12, .55);
+  }
+}
+
+// Also check alarms on a plain timer: drawing pauses when the browser throttles the page,
+// but a timer should still go off on time.
+setInterval(() => toolTick(performance.now()), 500);
+
+function drawHoldRing(now) {
+  if (!touch || touch.moved || menuOpen) return;
+  const p = (now - touch.t - 500) / (HOLD_MS - 500);
+  if (p <= 0) return;
+  // White on a dark track, so it shows up whether your finger is on an eye or on the background.
+  ctx.save(); ctx.lineCap = 'round';
+  ctx.lineWidth = 11; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.arc(touch.lx, touch.ly, 52, 0, Math.PI * 2); ctx.stroke();
+  ctx.lineWidth = 5; ctx.strokeStyle = '#fff';
+  ctx.beginPath(); ctx.arc(touch.lx, touch.ly, 52, -Math.PI / 2, -Math.PI / 2 + Math.min(p, 1) * Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+
 // ---------- main loop ----------
 let last = performance.now();
 function frame(now) {
@@ -910,10 +1257,15 @@ function frame(now) {
   }
 
   // Holding a finger still on it: it gets curious about your finger.
-  if (touch && !touch.petting && now - touch.t > 550) {
-    if (!touch.curious) { touch.curious = true; sfx.curious(); }
-    setOverride('curious', 300);
+  // Holding a finger still: it gets curious about your finger; keep holding and the tool menu opens.
+  if (touch && !touch.moved && now - touch.t > 550) {
+    if (!tool) {
+      if (!touch.curious) { touch.curious = true; sfx.curious(); }
+      setOverride('curious', 300);
+    }
+    if (now - touch.t > HOLD_MS) { const { lx, ly } = touch; touch = null; openMenu(lx, ly); }
   }
+  toolTick(now);
   if (DEMO && mood === 'groove' && !songPlaying() && now - lastBeat > 500) beat(now);   // mood-button demo has no music
   if (mood === 'sleeping' && now > nextSnore) { nextSnore = now + 3800; sfx.snore(); }
 
@@ -935,7 +1287,8 @@ function frame(now) {
   bounceV += (-140 * bounce - 9 * bounceV) * dt;
   bounce += bounceV * dt;
 
-  draw(now, blink);
+  if (tool) drawTool(now, blink); else draw(now, blink);
+  drawHoldRing(now);
   requestAnimationFrame(frame);
 }
 
@@ -986,18 +1339,22 @@ function poke(x, y) {
 }
 
 addEventListener('pointerdown', e => {
-  if (e.target.closest('#snd, #bond')) return;
+  if (e.target.closest('#snd, #bond, #menu, #toolx')) return;
   if (!DEMO) { goFullscreen(); keepAwake(); }
   audio();   // phones only allow sound after the first touch
-  cancelQuirk();
-  touch = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(),
-            dist: 0, petting: false, petStart: 0, curious: false, forgive: 0, lastPurr: 0 };
+  const silenced = kit.timer.alarmUntil > performance.now();   // any touch silences a ringing timer
+  kit.timer.alarmUntil = 0;
+  if (!tool) cancelQuirk();
+  touch = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), silenced,
+            dist: 0, moved: false, petting: false, petStart: 0, curious: false, forgive: 0, lastPurr: 0 };
 });
 addEventListener('pointermove', e => {
   if (!touch) return;
   const now = performance.now(), d = Math.hypot(e.clientX - touch.lx, e.clientY - touch.ly);
   touch.lx = e.clientX; touch.ly = e.clientY; touch.dist += d;
   if (touch.dist < 25) return;
+  touch.moved = true;
+  if (tool) return;   // in a tool, a drag is a swipe, not a pet
   if (!touch.petting) { touch.petting = true; touch.petStart = now; touch.lastPurr = now; sfx.hmm(); }   // "mm-hm"
   if (overridden('grumpy', now)) {   // petting makes up for the poking
     touch.forgive += d;
@@ -1012,6 +1369,11 @@ addEventListener('pointermove', e => {
 });
 function release() {
   if (!touch) return;
+  if (tool) {
+    if (performance.now() - touch.t < 900 && !touch.silenced) toolGesture(touch.lx - touch.x, touch.ly - touch.y);
+    touch = null;
+    return;
+  }
   if (touch.curious) { setOverride('happy', 1000); sfx.chirp(); }
   else if (!touch.petting && performance.now() - touch.t < 400) poke(touch.x, touch.y);
   if (touch.petting && touch.dist > S) tellPC('pet');
@@ -1019,7 +1381,7 @@ function release() {
 }
 addEventListener('pointerup', release);
 addEventListener('pointercancel', release);
-addEventListener('dblclick', () => { hudOn = !hudOn; $('hud').style.display = hudOn ? '' : 'none'; });
+addEventListener('dblclick', () => { if (tool) return; hudOn = !hudOn; $('hud').style.display = hudOn ? '' : 'none'; });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) keepAwake(); });
 
 // ---------- HUD ----------
@@ -1049,6 +1411,11 @@ setInterval(() => {
   const next = state.calendar && state.calendar.events.find(e => e.start * 1000 > Date.now());
   $('next').textContent = next ? `📅 ${new Date(next.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
   $('bond').textContent = state.buddy ? `💙 Lv${state.buddy.level}` : '';
+  const t = kit.timer, p = kit.pomo, running = [];   // tools still ticking in the background
+  if (t.end || t.pausedLeft) running.push(`⏳ ${mmss(timerLeft())}`);
+  if (kit.watch.start) running.push(`⏱ ${mmss(watchTime())}`);
+  if (p.end || p.pausedLeft) running.push(`🍅 ${mmss(pomoLeft())}`);
+  $('running').textContent = running.join('  ');
 }, 1000);
 
 addEventListener('resize', resize);
