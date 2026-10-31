@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import brain
 
 APP_NAME = "Desk Buddy"
-VERSION = "2.3"
+VERSION = "2.4"
 PORT = int(os.environ.get("DESKBUDDY_PORT", 8765))
 HTTPS_PORT = PORT + 1     # the secure link, needed for the phone's motion sensors and microphone
 FPS = 15                  # how often the phone gets cursor updates
@@ -206,7 +206,7 @@ stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0,
          "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0, "backspaces": 0,
          "beat": None, "mediaKind": None, "activity": None, "day": None, "typing": 0, "busy": False, "online": True,
          "pcBattery": None, "clip": None, "volume": None, "fullscreen": False, "cmd": None, "profile": None,
-         "life": None}
+         "life": None, "heart": None, "catchup": None, "links": [], "elsewhere": None}
 
 
 # ---------- saved files, and the people who use this PC ----------
@@ -331,6 +331,7 @@ DEFAULT_PREFS = {
     "gaming": True, "patterns": True,
     "weather": True, "daylight": True, "seasons": True, "occasions": True, "money": True,
     "hEid": True, "hChristmas": True, "hDiwali": True, "hLunar": True,
+    "needs": True, "catchup": True, "danceFx": True, "desktopBuddy": True,
 }
 PREF_CHOICES = {"soundOutput": ("phone", "pc", "both", "off")}
 PREF_RANGES = {"breakMinutes": (10, 180), "volume": (0, 100), "cheeky": (0, 3)}
@@ -370,8 +371,23 @@ LEVELS = [0, 40, 120, 260, 480]          # points needed for friendship levels 1
 POINTS = {"day": 10, "time": 1, "pet": 1, "break": 5}
 DAILY_CAP = {"time": 30, "pet": 15, "break": 15}
 bond_lock = threading.Lock()
-learner = tracker = None
+learner = tracker = heart = None
 profile_gen = 0   # goes up on every switch, so background checks (like Gmail) start fresh
+
+
+PC_FILE = os.path.join(DATA_DIR, "pc.json")
+
+
+def _pc_id():
+    d = load_json(PC_FILE, {})
+    if not d.get("id"):
+        d = {"id": "pc" + os.urandom(4).hex()}
+        save_json(PC_FILE, d)
+    return d["id"]
+
+
+PC_ID, PC_NAME = _pc_id(), socket.gethostname()   # this PC, for sync
+OTHERS_FILE = ""
 
 
 def born_buddy():
@@ -382,10 +398,12 @@ def born_buddy():
 
 def load_profile(pid, key):
     """Make pid the active person: their buddy, accounts, settings, learning and history."""
-    global CONFIG_FILE, BUDDY_FILE, learner, tracker, profile_key, profile_gen
+    global CONFIG_FILE, BUDDY_FILE, learner, tracker, heart, profile_key, profile_gen
     if tracker:
         with tracker.lock:
             tracker._save()
+    if heart:
+        save_heart()   # keep the last person's buddy's feelings
     folder = os.path.join(PROFILE_ROOT, pid)
     CONFIG_FILE, BUDDY_FILE = os.path.join(folder, "config.json"), os.path.join(folder, "buddy.json")
     profile_key = key
@@ -401,8 +419,16 @@ def load_profile(pid, key):
     with bond_lock:
         buddy.clear()
         buddy.update(fresh)
+        buddy.setdefault("pcPoints", {PC_ID: buddy["points"]})   # friendship from before sync existed
+        heart = brain.Heart(buddy.get("heart"), buddy["personality"])
     learner = brain.MediaLearner(os.path.join(folder, "learned.json"))
     tracker = brain.ActivityTracker(os.path.join(folder, "activity.json"))
+    global OTHERS_FILE
+    OTHERS_FILE = os.path.join(folder, "others.json")   # your other PCs' activity (sync)
+    tracker.others = {pc: e.get("days", {}) for pc, e in load_json(OTHERS_FILE, {}).items()}
+    if "sync_state" in globals():
+        sync_state.update(peers={}, folderPeers={}, code=None, key=None, group=None)
+        wake_sync.set()
     profiles["active"] = pid
     profiles["keys"] = {pid: windows_lock(key)} if key else {}   # so a restart doesn't ask again (it locks only on switching)
     save_json(PROFILES_FILE, profiles)
@@ -436,7 +462,32 @@ def add_points(kind):
             return
         buddy["today"][kind] = used + POINTS[kind]
         buddy["points"] += POINTS[kind]
+        pts = buddy.setdefault("pcPoints", {})
+        pts[PC_ID] = pts.get(PC_ID, 0) + POINTS[kind]
+        if heart:
+            buddy["heart"] = heart.save()
         save_json(BUDDY_FILE, buddy)
+
+
+def save_heart():
+    with bond_lock:
+        buddy["heart"] = heart.save()
+        save_json(BUDDY_FILE, buddy)
+
+
+PET_KINDS = ("pet", "pat", "chin", "hug", "boop", "tickle", "highfive")
+
+
+def give_care(kind):
+    """Petting, treats and play from the phone or the desktop buddy. False: it's had enough of that treat today."""
+    with bond_lock:
+        ok = heart.care(kind, time.time())
+    if ok and kind in PET_KINDS:
+        add_points("pet")
+    elif ok:
+        save_heart()
+    stats["heart"] = heart.info()
+    return ok
 
 
 def note_active_day():
@@ -445,6 +496,8 @@ def note_active_day():
         last = buddy["lastDay"]
         buddy["awayDays"] = (today - datetime.date.fromisoformat(last)).days if last else 0
         buddy["lastDay"] = today.isoformat()
+        if heart and buddy["awayDays"] >= 3:
+            heart._add("love", -.25)   # it missed you; a little extra love fixes that
         add_points("day")
 
 
@@ -802,11 +855,32 @@ class BeatTracker:
     def __init__(self):
         self.prev = self.flux_avg = 0.0
         self.onsets, self.last_onset, self.period, self.anchor = [], 0.0, 0.0, 0.0
+        # The shape of the song, for different dance moves: loudness now / lately / over the last
+        # few seconds, big hits (kicks), build-ups and drops.
+        self.fast = self.mid = self.long = self.loudest = 0.0
+        self.last_hit = self.last_drop = self.built_at = self.calm_at = self.music_at = 0.0
 
     def feed(self, level, now):
         flux = max(0.0, level - self.prev)
         self.prev = level
         self.flux_avg = self.flux_avg * 0.97 + flux * 0.03
+        if level > 0.01 and now - self.last_onset > 4:   # music (re)starting: forget the old song's shape
+            self.fast = self.mid = self.long = level * 0.5
+            self.music_at, self.loudest = now, 0.0
+        self.fast = self.fast * 0.98 + level * 0.02           # ~0.5 s
+        self.mid = self.mid * 0.995 + level * 0.005           # ~2 s
+        self.long = self.long * 0.99875 + level * 0.00125     # ~8 s
+        self.loudest = max(self.mid, self.loudest * 0.9998)   # the song's loud parts, fading over a minute
+        settled = now - self.music_at > 10
+        if settled and self.build() > 0.35:
+            self.built_at = now
+        if settled and self.long > 0.02 and self.fast < self.long * 0.45:
+            self.calm_at = now
+        if settled and now - self.last_drop > 15 and (
+                (now - self.calm_at < 4 and self.fast > self.long * 1.5) or (now - self.built_at < 3 and self.fast > self.long * 2.2)):
+            self.last_drop = now   # the drop!
+        if flux > self.flux_avg * 6 + 0.05:
+            self.last_hit = now
         if flux > self.flux_avg * 3 + 0.02 and now - self.last_onset > 0.2:
             self.last_onset = now
             self.onsets = [t for t in self.onsets if now - t < 10] + [now]
@@ -844,8 +918,18 @@ class BeatTracker:
         else:
             self.anchor = now
 
-    def state(self):
-        return {"bpm": round(60 / self.period, 1), "t0": int(self.anchor * 1000)} if self.period else None
+    def build(self):
+        return min(1.0, max(0.0, (self.mid - self.long) / self.long * 2)) if self.long > 0.02 and self.fast > self.long * 0.6 else 0.0
+
+    def state(self, now):
+        if not self.period:
+            return None
+        recent = sum(1 for t in self.onsets if now - t < 4)
+        return {"bpm": round(60 / self.period, 1), "t0": int(self.anchor * 1000),
+                "energy": round(self.mid / self.loudest, 2) if self.loudest else 0, "build": round(self.build(), 2) if now - self.music_at > 10 else 0,
+                "busy": round(recent * self.period / 4, 2),            # hits per beat
+                "calm": now - self.calm_at < 0.5,                          # a quiet break in the song
+                "hit": int(self.last_hit * 1000), "drop": int(self.last_drop * 1000)}
 
 
 def audio_loop():
@@ -878,11 +962,45 @@ def audio_loop():
         tick += 1
         if tick % 2 == 0:
             stats["audio"] = round(level, 3)
-            stats["beat"] = beats.state()
+            stats["beat"] = beats.state(time.time())
         time.sleep(1 / 100)
 
 
 work_session = {"start": time.time()}   # the phone can reset this ("I just took a break")
+
+
+# Its heart keeps beating while the phone is off: needs change all day, and it remembers what you
+# did so it can catch up when you open the phone again.
+away = {"since": None, "acts": {}, "songs": set(), "mail": 0}
+heart_clock = {"tick": time.time(), "saved": time.time()}
+
+
+def feel(now, here, key, media):
+    if now - heart_clock["tick"] >= 15:
+        hours = min(now - heart_clock["tick"], 3600) / 3600
+        heart_clock["tick"] = now
+        if prefs.get("needs", True):
+            with bond_lock:
+                heart.tick(hours, here, key, datetime.datetime.now().hour)
+        if now - heart_clock["saved"] > 300:
+            heart_clock["saved"] = now
+            save_heart()
+    stats["heart"] = heart.info() if prefs.get("needs", True) else None
+    today = lambda: dict(tracker.days.get(datetime.date.today().isoformat(), {}).get("acts", {}))
+    mail_seq = (stats["mail"] or {}).get("seq", 0)
+    if phones == 0:
+        if away["since"] is None:
+            away.update(since=now, acts=today(), songs=set(), mail=mail_seq)
+        elif key == "music" and media.get("title"):
+            away["songs"].add(media["title"])
+    elif away["since"] is not None:
+        minutes = (now - away["since"]) / 60
+        if minutes >= 15:
+            report = brain.catch_up(away["acts"], today(), minutes)
+            report.update(id=int(now), songs=len(away["songs"]), song=next(iter(away["songs"]), ""),
+                          mails=max(0, mail_seq - away["mail"]))
+            stats["catchup"] = report
+        away["since"] = None
 
 
 def stats_loop():
@@ -898,6 +1016,7 @@ def stats_loop():
         if idle > SESSION_RESET_IDLE:
             work_session["start"] = time.time()
         if idle < 60:   # you're here: that's time spent together
+            last_here["at"] = time.time()
             note_active_day()
             active += 1
             if active % 600 == 0:
@@ -920,7 +1039,10 @@ def stats_loop():
         if key == "browsing" and playing == "music":
             key = "music"
         tracker.tick(now, idle < 60 or playing == "movie", key)   # watching a film counts, even hands-off
+        screen["fullscreen"] = full
         stats["activity"], stats["fullscreen"] = tracker.now(now), full and key == "gaming"
+        feel(now, idle < 60 or playing == "movie", key, media)
+        stats["elsewhere"] = elsewhere()
         if int(now) % 15 == 0 or stats["day"] is None:
             day = tracker.summary()
             stats["day"] = {k: day[k] for k in ("activeMin", "productiveMin", "breakdown", "first", "usualStart", "usualEnd",
@@ -970,6 +1092,77 @@ def lan_ip():
     finally:
         s.close()
 
+
+
+# ---------- the ways your phone can reach this PC: Wi-Fi, or the phone's own USB / Bluetooth tethering ----------
+# Turning on USB or Bluetooth tethering on the phone makes a little private network between the two.
+# The phone hears about every address the PC has, and switches by itself when one stops working.
+
+links = []   # [{"ip", "net", "kind": wifi/lan/cable/bluetooth, "public"}]
+TETHER_RE = re.compile(r"remote ndis|rndis|apple mobile device|usb.*(ethernet|ncm)|android|\bncm\b", re.I)
+VIRTUAL_RE = re.compile(r"hyper-v|vmware|virtualbox|vethernet|wsl|tap-|wintun|wireguard|warp|vpn|loopback|npcap|zerotier|tailscale|hamachi", re.I)
+LINKS_PS = r"""
+$o = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } | ForEach-Object {
+    $a = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
+    $p = Get-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
+    [pscustomobject]@{ ip = $_.IPAddress; prefix = $_.PrefixLength; desc = [string]$a.InterfaceDescription;
+                       media = [string]$a.PhysicalMediaType; category = [string]$p.NetworkCategory } }
+ConvertTo-Json -Compress -InputObject @($o)
+"""
+
+
+def find_links():
+    out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", LINKS_PS],
+                         capture_output=True, text=True, creationflags=NO_WINDOW, timeout=30).stdout
+    data = json.loads(out or "[]")
+    found = []
+    for d in data if isinstance(data, list) else [data]:
+        desc = f"{d.get('desc', '')} {d.get('media', '')}"
+        if not d.get("ip") or VIRTUAL_RE.search(desc):
+            continue
+        kind = ("cable" if TETHER_RE.search(desc) else "bluetooth" if "bluetooth" in desc.lower()
+                else "wifi" if re.search(r"wi-?fi|wireless|802\.11|wlan", desc, re.I) else "lan")
+        found.append({"ip": d["ip"], "net": str(ipaddress.ip_network(f"{d['ip']}/{d.get('prefix', 24)}", strict=False)),
+                      "kind": kind, "public": d.get("category") == "Public"})
+    order = {"wifi": 0, "lan": 1, "cable": 2, "bluetooth": 3}
+    return sorted(found, key=lambda l: order[l["kind"]])
+
+
+def links_loop():
+    while True:
+        try:
+            links[:] = find_links()
+            stats["links"] = [{"ip": l["ip"], "kind": l["kind"]} for l in links if not blocked_link(l)]
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        time.sleep(20)
+
+
+def blocked_link(link):
+    """Public networks (cafes, airports) are never served, except your own phone's cable or Bluetooth link."""
+    return link["public"] and link["kind"] not in ("cable", "bluetooth")
+
+
+def blocked_client(ip):
+    if ip.startswith("127."):
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+        return any(blocked_link(l) for l in links if addr in ipaddress.ip_network(l["net"]))
+    except ValueError:
+        return False
+
+
+def own_origin(origin):
+    """Is this one of Desk Buddy's own pages, reached at another of this PC's addresses?"""
+    try:
+        u = urllib.parse.urlsplit(origin)
+        port = u.port
+    except ValueError:
+        return False
+    hosts = {l["ip"] for l in links} | {lan_ip(), "localhost", "127.0.0.1"} | {p["ip"] for p in sync_state["peers"].values()}
+    return u.scheme in ("http", "https") and u.hostname in hosts and port in (PORT, HTTPS_PORT)
 
 def phone_url():
     return f"http://{lan_ip()}:{PORT}"
@@ -1213,6 +1406,263 @@ def qr_svg(text):
     return svg[svg.index("<svg"):]  # drop the XML header so it can sit inside the page
 
 
+# ---------- one buddy on all your PCs: sync through a shared folder and/or the same network ----------
+# A sync code (like MOCHI-7K2P-91QX) ties your PCs together and encrypts everything that's shared. Over the
+# same network the PCs find each other and swap directly; through a synced folder (Google Drive, OneDrive,
+# Dropbox) each PC leaves its own encrypted file. What's shared: the buddy (friendship from every PC adds
+# up), its feelings (they follow you to the PC you used last), what it learned about music/movies, and your
+# activity. Gmail and Calendar logins stay on each PC.
+
+SYNC_PORT = 8769
+CODE_WORDS = ["MOCHI", "PIXEL", "NOVA", "ORBIT", "BEAN", "ZIGGY", "LUNA", "TOFU", "BLIP", "DAISY", "SPROUT", "KIKI", "BOLT", "NORI"]
+CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no 0/O, 1/I/L mix-ups
+sync_state = {"peers": {}, "folderAt": 0, "folderPeers": {}, "error": "", "code": None, "key": None, "group": None}
+wake_sync = threading.Event()
+last_here = {"at": time.time()}   # the last time you used this PC
+
+
+def new_sync_code():
+    part = lambda: "".join(random.SystemRandom().choice(CODE_CHARS) for _ in range(4))
+    return f"{random.SystemRandom().choice(CODE_WORDS)}-{part()}-{part()}"
+
+
+def sync_keys():
+    """The encryption key and the group name, from the active person's sync code (cached)."""
+    s = config.get("sync") or {}
+    code = unprotect(s["code"]) if s.get("code") else ""
+    if code != sync_state["code"]:
+        norm = re.sub(r"[^A-Z0-9]", "", code.upper()).encode()
+        key = hashlib.pbkdf2_hmac("sha256", norm, b"deskbuddy-sync", 200_000) if norm else None
+        sync_state.update(code=code, key=key, group=hashlib.sha256(b"group" + key).hexdigest()[:16] if key else None)
+    return sync_state["key"], sync_state["group"]
+
+
+def seal(obj, key):
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    nonce = os.urandom(12)
+    return base64.b64encode(nonce + AESGCM(key).encrypt(nonce, json.dumps(obj).encode(), b"deskbuddy-sync")).decode()
+
+
+def unseal(text, key):
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    raw = base64.b64decode(text)
+    return json.loads(AESGCM(key).decrypt(raw[:12], raw[12:], b"deskbuddy-sync"))
+
+
+def make_bundle():
+    with bond_lock:
+        b = {k: buddy.get(k) for k in ("name", "personality", "gender", "met", "lastDay", "edited", "epoch", "pcPoints")}
+        b["heart"] = heart.save()
+    others = load_json(OTHERS_FILE, {})
+    activity = {**others, PC_ID: {"name": PC_NAME, "at": time.time(), "days": tracker.recent(14)}}
+    return {"v": 1, "pc": PC_ID, "pcName": PC_NAME, "at": time.time(), "activeAt": last_here["at"],
+            "buddy": b, "learned": learner.data(), "activity": activity}
+
+
+def merge_bundle(r):
+    """Fold another PC's copy into ours. Safe to repeat: every rule gives the same result twice."""
+    if not isinstance(r, dict) or r.get("pc") == PC_ID:
+        return
+    rb = r.get("buddy") or {}
+    with bond_lock:
+        if (config.get("sync") or {}).get("adopt") and rb.get("personality") in PERSONALITIES:
+            # Just joined: this PC takes on the buddy you already have (it keeps the friendship it earned here).
+            buddy.update(name=str(rb.get("name") or buddy["name"])[:20], personality=rb["personality"],
+                         gender=rb.get("gender") if rb.get("gender") in GENDERS else buddy["gender"],
+                         edited=rb.get("edited") or time.time(), epoch=rb.get("epoch") or 0, met=rb.get("met") or buddy["met"])
+            heart.personality = buddy["personality"]
+            if isinstance(rb.get("heart"), dict):
+                heart.adopt(rb["heart"])
+            config["sync"]["adopt"] = False
+            save_json(CONFIG_FILE, config)
+        if (rb.get("epoch") or 0) > (buddy.get("epoch") or 0):   # the friendship was restarted over there
+            buddy.update(epoch=rb["epoch"], met=rb.get("met") or buddy["met"], pcPoints={})
+        if (rb.get("epoch") or 0) == (buddy.get("epoch") or 0):
+            pts = buddy.setdefault("pcPoints", {})
+            for pc, n in (rb.get("pcPoints") or {}).items():   # each PC only ever adds to its own count
+                if pc != PC_ID and isinstance(n, (int, float)):
+                    pts[pc] = max(pts.get(pc, 0), n)
+            buddy["points"] = sum(pts.values())
+        if (rb.get("edited") or 0) > (buddy.get("edited") or 0):   # renamed / new personality over there
+            if rb.get("personality") in PERSONALITIES and rb.get("gender") in GENDERS and rb.get("name"):
+                buddy.update(name=str(rb["name"])[:20], personality=rb["personality"], gender=rb["gender"], edited=rb["edited"])
+                heart.personality = buddy["personality"]
+        if rb.get("met") and rb["met"] < buddy["met"]:
+            buddy["met"] = rb["met"]
+        if (rb.get("lastDay") or "") > (buddy.get("lastDay") or ""):
+            buddy["lastDay"] = rb["lastDay"]
+        if (r.get("activeAt") or 0) > last_here["at"] and isinstance(rb.get("heart"), dict):
+            heart.adopt(rb["heart"])   # you were over there more recently: it brings its feelings along
+        buddy["heart"] = heart.save()
+        save_json(BUDDY_FILE, buddy)
+    learner.merge(r.get("learned"))
+    others = load_json(OTHERS_FILE, {})
+    for pc, entry in (r.get("activity") or {}).items():
+        if pc != PC_ID and isinstance(entry, dict) and entry.get("at", 0) > others.get(pc, {}).get("at", 0):
+            others[pc] = entry
+    save_json(OTHERS_FILE, others)
+    tracker.others = {pc: e.get("days", {}) for pc, e in others.items()}
+    stats["buddy"] = buddy_info()
+
+
+def synced_folders():
+    """Folders that sync to the cloud on their own: Google Drive for desktop, OneDrive, Dropbox."""
+    home, found = os.path.expanduser("~"), []
+    drive = [f"{c}:\\My Drive" for c in "DEFGHIJKLMNOPQRSTUVWXYZ"] + [os.path.join(home, "My Drive"), os.path.join(home, "Google Drive")]
+    for path in drive:
+        if os.path.isdir(path):
+            found.append({"name": "Google Drive", "path": path})
+            break
+    if os.environ.get("OneDrive") and os.path.isdir(os.environ["OneDrive"]):
+        found.append({"name": "OneDrive", "path": os.environ["OneDrive"]})
+    for info in (os.path.join(os.environ.get("LOCALAPPDATA", ""), "Dropbox", "info.json"), os.path.join(os.environ.get("APPDATA", ""), "Dropbox", "info.json")):
+        path = (load_json(info, {}).get("personal") or {}).get("path")
+        if path and os.path.isdir(path):
+            found.append({"name": "Dropbox", "path": path})
+            break
+    return found
+
+
+def folder_sync(key, group):
+    root = (config.get("sync") or {}).get("folder")
+    if not root or not os.path.isdir(root):
+        return
+    folder = os.path.join(root, "Desk Buddy", group)
+    os.makedirs(folder, exist_ok=True)
+    for name in os.listdir(folder):
+        if name.endswith(".dbsync") and name != PC_ID + ".dbsync":
+            try:
+                with open(os.path.join(folder, name), encoding="utf-8") as f:
+                    r = unseal(f.read(), key)
+                merge_bundle(r)
+                sync_state["folderPeers"][r["pc"]] = {"name": r.get("pcName", "?"), "at": r.get("at", 0)}
+            except Exception:
+                continue   # half-downloaded, or from an old code
+    tmp = os.path.join(folder, PC_ID + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(seal(make_bundle(), key))
+    os.replace(tmp, os.path.join(folder, PC_ID + ".dbsync"))
+    sync_state["folderAt"] = time.time()
+
+
+def sync_loop():
+    while True:
+        try:
+            key, group = sync_keys()
+            if key:
+                folder_sync(key, group)
+            sync_state["error"] = ""
+        except Exception as e:
+            sync_state["error"] = f"Couldn't use the sync folder ({e.__class__.__name__})"
+        wake_sync.wait(60)
+        wake_sync.clear()
+
+
+def sync_with_peer(peer):
+    key, _ = sync_keys()
+    try:
+        req = urllib.request.Request(f"http://{peer['ip']}:{peer['port']}/sync", data=seal(make_bundle(), key).encode(), method="POST")
+        with urllib.request.urlopen(req, timeout=15) as r:
+            merge_bundle(unseal(r.read().decode(), key))
+        peer["synced"] = time.time()
+    except Exception:
+        pass
+
+
+def lan_sync_loop():
+    """Says hello on the local network every 20 s; PCs with the same sync code swap their copies."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    try:
+        sock.bind(("0.0.0.0", SYNC_PORT))
+    except OSError:
+        return
+    sock.settimeout(1)
+    next_hello = 0
+    while True:
+        now = time.time()
+        key, group = sync_keys()
+        on = key and (config.get("sync") or {}).get("lan", True)
+        if on and now > next_hello:
+            next_hello = now + 20
+            hello = json.dumps({"app": "deskbuddy", "g": group, "pc": PC_ID, "name": PC_NAME, "port": PORT,
+                                "active": last_here["at"]}).encode()
+            targets = {"255.255.255.255"} | {str(ipaddress.ip_network(l["net"]).broadcast_address) for l in links if not l["public"]}
+            for t in targets:
+                try:
+                    sock.sendto(hello, (t, SYNC_PORT))
+                except OSError:
+                    pass
+        try:
+            data, (ip, _) = sock.recvfrom(4096)
+            msg = json.loads(data)
+        except (socket.timeout, ValueError, OSError):
+            continue
+        if not on or msg.get("app") != "deskbuddy" or msg.get("g") != group or msg.get("pc") == PC_ID or blocked_client(ip):
+            continue
+        peer = sync_state["peers"].setdefault(msg["pc"], {"synced": 0})
+        peer.update(name=str(msg.get("name", "?"))[:40], ip=ip, port=int(msg.get("port", PORT)), active=float(msg.get("active", 0)), seen=now)
+        if now - peer["synced"] > 60:
+            peer["synced"] = now
+            threading.Thread(target=sync_with_peer, args=(peer,), daemon=True).start()
+
+
+def elsewhere():
+    """You've moved to another of your PCs on this network: the phone can follow you there."""
+    if stats["idle"] < 30:
+        return None
+    now = time.time()
+    best = max((p for p in sync_state["peers"].values() if now - p.get("seen", 0) < 60 and p.get("active", 0) > last_here["at"] + 5),
+               key=lambda p: p["active"], default=None)
+    return {"ip": best["ip"], "name": best["name"]} if best else None
+
+
+def sync_status():
+    key, _ = sync_keys()
+    s, now = config.get("sync") or {}, time.time()
+    peers = [{"name": p["name"], "via": "same network", "ago": round(now - p.get("synced", 0)) if p.get("synced") else None}
+             for p in sync_state["peers"].values() if now - p.get("seen", 0) < 120]
+    peers += [{"name": p["name"], "via": "synced folder", "ago": round(now - p["at"])} for p in sync_state["folderPeers"].values()]
+    return {"on": bool(key), "lan": s.get("lan", True), "folder": s.get("folder", ""), "peers": peers, "error": sync_state["error"],
+            "folderAt": sync_state["folderAt"], "pcName": PC_NAME}
+
+
+def api_sync(data):
+    action = data.get("action")
+    s = config.setdefault("sync", {})
+    if action in ("start", "join"):
+        code = new_sync_code() if action == "start" else str(data.get("code", "")).strip().upper()
+        if len(re.sub(r"[^A-Z0-9]", "", code)) < 10:
+            raise ValueError("That code looks too short. It's on the other PC: Desk Buddy > Sync")
+        folders = synced_folders()
+        s.update(code=protect(code), lan=True, folder=s.get("folder") or (folders[0]["path"] if folders else ""),
+                 adopt=action == "join")
+        msg = "Sync is on! Type this code on your other PC: " + code if action == "start" else "Joined! Syncing now…"
+    elif action == "folder":
+        path = str(data.get("path", "")).strip().strip('"')
+        if path and not os.path.isdir(path):
+            raise ValueError("That folder doesn't exist")
+        s["folder"] = path
+        msg = "Saved"
+    elif action == "lan":
+        s["lan"] = bool(data.get("on"))
+        msg = "Saved"
+    elif action == "stop":
+        config["sync"] = {}
+        sync_state.update(peers={}, folderPeers={})
+        msg = "Sync is off on this PC"
+    else:
+        raise ValueError("Unknown action")
+    save_json(CONFIG_FILE, config)
+    wake_sync.set()
+    return msg
+
+
+def sync_code_text():
+    key, _ = sync_keys()
+    return sync_state["code"] if key else ""
+
 # ---------- the dashboard's API (only answers this PC) ----------
 
 phone_tools = {"state": None, "at": 0}   # the phone's timer/stopwatch/focus, so the dashboard can show them
@@ -1225,7 +1675,8 @@ def live_status():
     return {"phones": phones, "buddy": buddy_info(), "phoneCaps": caps, **services,
             "tools": phone_tools["state"] if now - phone_tools["at"] < 5 else None,
             "nowPlaying": {**(stats["mediaKind"] or {}), "playing": bool(media.get("playing"))} if media else None,
-            "activity": stats["activity"], "profile": stats["profile"], "profiles": profile_list(), "life": stats["life"]}
+            "activity": stats["activity"], "profile": stats["profile"], "profiles": profile_list(), "life": stats["life"],
+            "heart": stats["heart"], "sync": sync_status(), "links": stats["links"]}
 
 
 def teach_media(data):
@@ -1348,6 +1799,8 @@ def api_state():
         "gmailUser": config["gmail_user"], "gmailSaved": bool(config["gmail_password"]),
         "calendarSaved": bool(config["calendar_url"]), "startup": os.path.exists(STARTUP_LNK),
         "payday": config.get("payday", 0), "birthday": config.get("birthday", ""),
+        "syncCode": sync_code_text(), "folders": synced_folders(),
+        "linkQr": {l["ip"]: qr_svg(f"http://{l['ip']}:{PORT}") for l in stats["links"]},
     }
 
 
@@ -1359,10 +1812,18 @@ def api_buddy(data):
         if data.get("gender") in GENDERS:
             buddy["gender"] = data["gender"]
         if data.get("personality") in PERSONALITIES:
-            buddy["personality"] = data["personality"]
+            buddy["personality"] = heart.personality = data["personality"]
+        if name or data.get("gender") in GENDERS or data.get("personality") in PERSONALITIES:
+            buddy["edited"] = time.time()   # newest change wins on your other PCs
         if data.get("reset"):
-            buddy.update(points=0, met=datetime.date.today().isoformat(), todayDate="", today={}, awayDays=0)
+            buddy.update(points=0, met=datetime.date.today().isoformat(), todayDate="", today={}, awayDays=0,
+                         pcPoints={}, epoch=time.time())
+            heart.__init__({}, buddy["personality"])
+        if data.get("care") in brain.CARE:   # the dashboard's "give it some love" buttons
+            heart.care(data["care"], time.time())
+        buddy["heart"] = heart.save()
         save_json(BUDDY_FILE, buddy)
+    stats["heart"] = heart.info()
     return "Saved"
 
 
@@ -1423,7 +1884,7 @@ def api_uninstall(_data):
 
 
 API = {
-    "prefs": lambda d: (update_prefs(d), "Saved")[1], "buddy": api_buddy, "accounts": api_accounts,
+    "prefs": lambda d: (update_prefs(d), "Saved")[1], "buddy": api_buddy, "accounts": api_accounts, "sync": api_sync,
     "startup": api_startup, "test-sound": api_test_sound, "onboarded": api_onboarded, "uninstall": api_uninstall,
     "media": api_media, "tool": api_tool, "profile": api_profile, "life": lambda d: api_life(d),
 }
@@ -1450,8 +1911,16 @@ def phone_connected(delta):
 class Handler(BaseHTTPRequestHandler):
     static = {}
 
+    def cors(self):
+        # The phone may reach the PC at another address (cable, Bluetooth); allow only Desk Buddy's own pages.
+        origin = self.headers.get("Origin")
+        if origin and own_origin(origin):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
     def send_body(self, kind, body, cache=True):
         self.send_response(200)
+        self.cors()
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
         if not cache:
@@ -1462,6 +1931,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         local = self.client_address[0] == "127.0.0.1"
+        if blocked_client(self.client_address[0]):
+            return self.send_error(403)
         if path in self.static:
             self.send_body(*self.static[path])
         elif path in ("/", "/index.html"):
@@ -1493,13 +1964,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
-        body = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 20000)).decode("utf-8", "replace")
-        if path == "/bond":
+        if blocked_client(self.client_address[0]):
+            return self.send_error(403)
+        limit = 4_000_000 if path == "/sync" else 20000
+        body = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), limit)).decode("utf-8", "replace")
+        if path == "/sync":   # another of your PCs, with the same sync code
+            key, _ = sync_keys()
+            try:
+                merge_bundle(unseal(body, key))
+            except Exception:
+                return self.send_error(403)
+            self.send_body("text/plain", seal(make_bundle(), key).encode(), cache=False)
+        elif path == "/bond":
             # The phone reports petting and breaks taken; the PC keeps the friendship score.
-            kind = body.strip()
-            if kind in ("pet", "break"):
+            kind, ok = body.strip()[:20], True
+            if kind == "break":
                 add_points(kind)
-            self.send_body("application/json", json.dumps(buddy_info()).encode(), cache=False)
+            elif kind in brain.CARE:
+                ok = give_care(kind)
+            self.send_body("application/json", json.dumps({**buddy_info(), "ok": ok, "heart": stats["heart"]}).encode(), cache=False)
         elif path == "/media-correct":   # "that's music / a movie / neither" from the phone
             try:
                 result = {"ok": True, "message": teach_media(json.loads(body))}
@@ -1549,6 +2032,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def stream_events(self):
         self.send_response(200)
+        self.cors()
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
@@ -1625,13 +2109,24 @@ def allow_through_firewall(exe):
     # Already allowed (e.g. installing an update): skip the admin prompt.
     shown = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={FIREWALL_RULE}", "verbose"],
                            capture_output=True, text=True, creationflags=NO_WINDOW).stdout
-    if os.path.normcase(exe) in os.path.normcase(shown) and str(HTTPS_PORT) in shown:
+    cable_rule, sync_rule = FIREWALL_RULE + "Cable", FIREWALL_RULE + "Sync"
+    has = lambda rule: rule in subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule}"],
+                                              capture_output=True, text=True, creationflags=NO_WINDOW).stdout
+    if os.path.normcase(exe) in os.path.normcase(shown) and str(HTTPS_PORT) in shown and has(cable_rule) and has(sync_rule):
         return
-    # Only home/work ("private") networks - the robot never listens on public Wi-Fi.
+    # Only home/work ("private") networks - the robot never listens on public Wi-Fi. The second rule is for
+    # the phone's own USB / Bluetooth tethering link, which Windows calls "public": wired-type links only, and
+    # only from that link itself (the app also checks it really is a phone's tethering adapter).
     run_as_admin("cmd.exe",
                  f"/c netsh advfirewall firewall delete rule name={FIREWALL_RULE} >nul & "
+                 f"netsh advfirewall firewall delete rule name={cable_rule} >nul & "
+                 f"netsh advfirewall firewall delete rule name={sync_rule} >nul & "
+                 f"netsh advfirewall firewall add rule name={sync_rule} dir=in action=allow "
+                 f'protocol=UDP localport={SYNC_PORT} program="{exe}" profile=private,domain enable=yes & '
                  f"netsh advfirewall firewall add rule name={FIREWALL_RULE} dir=in action=allow "
-                 f'protocol=TCP localport={PORT},{HTTPS_PORT} program="{exe}" profile=private,domain enable=yes')
+                 f'protocol=TCP localport={PORT},{HTTPS_PORT} program="{exe}" profile=private,domain enable=yes & '
+                 f"netsh advfirewall firewall add rule name={cable_rule} dir=in action=allow "
+                 f'protocol=TCP localport={PORT},{HTTPS_PORT} program="{exe}" profile=public interfacetype=lan remoteip=localsubnet enable=yes')
 
 
 def make_shortcut(lnk, target, args=""):
@@ -1724,6 +2219,31 @@ def quit_app():
         os._exit(0)
 
 
+screen = {"fullscreen": False}
+
+
+def start_mini_buddy():
+    """The little eyes in the corner of your screen while no phone is connected."""
+    import minibuddy
+
+    def state():
+        media, kind = stats["media"] or {}, (stats["mediaKind"] or {}).get("kind")
+        x, y = cursor_position()
+        return {"idle": stats["idle"], "activity": stats["activity"], "cpu": stats["cpu"], "heart": stats["heart"],
+                "beat": stats["beat"], "x": x, "y": y,
+                "musicPlaying": bool(media.get("playing")) and kind == "music",
+                "moviePlaying": bool(media.get("playing")) and kind == "movie",
+                "show": bool(prefs.get("desktopBuddy", True)) and phones == 0 and not screen["fullscreen"]}
+
+    def save_pos(x, y):
+        config["mini_pos"] = [x, y]
+        save_json(CONFIG_FILE, config)
+
+    pos = config.get("mini_pos")
+    minibuddy.MiniBuddy(state, give_care, open_dashboard, lambda k, v: update_prefs({k: v}), save_pos,
+                        tuple(pos) if isinstance(pos, list) and len(pos) == 2 else None).start()
+
+
 def run_app(args):
     global tray
     Handler.static = {
@@ -1732,8 +2252,9 @@ def run_app(args):
         "/icon-192.png": ("image/png", png_bytes(robot_image(192))),
         "/icon-512.png": ("image/png", png_bytes(robot_image(512))),
     }
-    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, life_loop, start_secure_server):
+    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, life_loop, links_loop, sync_loop, lan_sync_loop, start_secure_server):
         threading.Thread(target=loop, daemon=True).start()
+    start_mini_buddy()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     # At login it starts quietly; the dashboard only opens when asked (or until setup is finished).

@@ -108,6 +108,7 @@ const DEFAULT_PREFS = {
   movie: true, greetings: true, spin: true, toolbox: true, babble: true,
   typing: true, loading: true, offline: true, pcBattery: true, clipboard: true, volumeReact: true, gaming: true, patterns: true,
   weather: true, daylight: true, seasons: true, occasions: true, money: true, hEid: true, hChristmas: true, hDiwali: true, hLunar: true,
+  needs: true, catchup: true, danceFx: true, desktopBuddy: true,
 };
 const P = k => ((state && state.prefs) || DEFAULT_PREFS)[k];
 
@@ -157,6 +158,15 @@ const MOODS = {
   suspicious:  shape({ h: .9, lidL: .55, lidR: .15, tilt: .3, color: [190, 140, 255] }),
   surprised:   shape({ w: 1.2, h: 1.25, color: [130, 255, 230] }),
   lost:        shape({ w: .8, h: .8, lidL: .3, lidR: .3, tilt: -.3, color: [90, 110, 130] }),
+  // How it feels inside (its needs, kept by the PC all day).
+  joyful:      shape({ w: 1.08, h: 1.02, happy: .3, sparkle: .6, color: [110, 250, 240] }),
+  clingy:      shape({ w: 1.18, h: 1.22, tilt: -.3, sparkle: 1, color: [150, 220, 255] }),            // big pleading eyes
+  lonely:      shape({ w: .95, h: .95, lidL: .18, lidR: .18, tilt: -.35, color: [120, 180, 235] }),
+  sad:         shape({ h: .85, lidL: .28, lidR: .28, tilt: -.55, sparkle: .5, color: [100, 160, 230] }),  // teary
+  annoyed:     shape({ h: .7, lidL: .4, lidR: .4, tilt: .25, color: [230, 150, 110] }),                // side-eye
+  angry:       shape({ w: 1.05, h: .8, lidL: .25, lidR: .25, tilt: .7, color: [255, 80, 70] }),
+  bored:       shape({ h: .62, lidL: .42, lidR: .42, color: [140, 200, 220] }),
+  tired:       shape({ h: .8, lidL: .45, lidR: .45, tilt: -.2, color: [90, 170, 215] }),
   // Short poses used by quirks.
   sneezeIn:    shape({ h: .9, lidL: .4, lidR: .4, tilt: -.3 }),
   squint:      shape({ w: 1.15, h: .1 }),
@@ -224,7 +234,7 @@ function emit(ev) {
       outbox = [];
       queueMicrotask(() => {
         const events = outbox; outbox = null;
-        fetch('sound', { method: 'POST', body: JSON.stringify({ events }) }).catch(() => {});
+        fetch(PC('sound'), { method: 'POST', body: JSON.stringify({ events }) }).catch(() => {});
       });
     }
     outbox.push(ev);
@@ -472,7 +482,9 @@ function beatPhase() {
   const period = 60000 / b.bpm, t = (Date.now() - clockOffset - b.t0) / period;
   return { phase: t - Math.floor(t), count: Math.floor(t) };
 }
-const tellPC = kind => { if (!DEMO) fetch('bond', { method: 'POST', body: kind }).catch(() => {}); };
+let pcBase = '';   // '' = the address this page came from; otherwise another way to reach the PC
+const PC = path => pcBase + path;
+const tellPC = kind => { if (!DEMO) fetch(PC('bond'), { method: 'POST', body: kind }).catch(() => {}); };
 
 // Demo mode (face.html?demo) for the website: no PC needed. The page around it sends
 // {x, y} to steer the eyes and {mood} to show off a mood or trick.
@@ -483,7 +495,7 @@ const DEMO_LINES = {
   suspicious: 'Hmm… is this work? 👀', surprised: "Oh! You're back! 👋",
 };
 if (DEMO) {
-  let demo = { x: 0, y: 0 }, demoSongUntil = 0, demoReadUntil = 0, demoMovieUntil = 0, demoLife = null;
+  let demo = { x: 0, y: 0 }, demoSongUntil = 0, demoReadUntil = 0, demoMovieUntil = 0, demoLife = null, demoHeart = null;
   const demoBuddy = { name: params.get('name') || 'Pip', personality: params.get('personality') || 'cheerful',
                       gender: params.get('gender') || 'neutral', level: +params.get('level') || 3, progress: .4, days: 12, awayDays: 0 };
   addEventListener('message', e => {
@@ -499,7 +511,10 @@ if (DEMO) {
       return;
     }
     if (d.gender) { demoBuddy.gender = d.gender; return; }   // dashboard preview of boy / girl / robot
-    if ('life' in d) { demoLife = d.life; return; }   // website demo of weather, seasons and holidays
+    if ('life' in d) { demoLife = d.life; return; }
+    if ('heart' in d) { demoHeart = d.heart; return; }   // website demo of its feelings
+    if (d.play === 'ball') return startBall();
+    if (d.snack) return giveTreat(d.snack);   // website demo of weather, seasons and holidays
     if ('tool' in d) { if (TOOLS[d.tool]) startTool(d.tool); else if (tool) endTool(); return; }   // website demo of the tools
     if (!d.mood) return;
     cancelQuirk();
@@ -526,7 +541,7 @@ if (DEMO) {
   const demoBeatT0 = Date.now();
   setInterval(() => {
     const now = performance.now(), song = now < demoSongUntil, movie = now < demoMovieUntil;
-    onState({ ...demo, cpu: 12, ram: 45, idle: 0, work: 12, buddy: demoBuddy, now: Date.now(), life: demoLife,
+    onState({ ...demo, cpu: 12, ram: 45, idle: 0, work: 12, buddy: demoBuddy, now: Date.now(), life: demoLife, heart: demoHeart,
               title: now < demoReadUntil ? 'Paper.pdf - Adobe Acrobat' : movie ? 'Big Buck Bunny - Official Trailer - YouTube' : '',
               media: song ? { title: 'Sunny Afternoon', artist: 'The Demo Band', playing: true, app: 'Spotify' }
                    : movie ? { title: 'Big Buck Bunny - Official Trailer', artist: 'Blender', playing: true, app: 'Chrome' } : null,
@@ -534,7 +549,32 @@ if (DEMO) {
               audio: song ? ((Date.now() - demoBeatT0) % 500 < 140 ? .7 : .15) : movie ? .2 : 0 });
   }, 66);
 } else {
-  new EventSource('events').onmessage = e => onState(JSON.parse(e.data));
+  // The PC can be reached several ways: Wi-Fi, or the phone's USB / Bluetooth tethering. It tells us all
+  // its addresses; if the one we're using goes quiet, try the next, so pulling the cable or leaving Wi-Fi just works.
+  const savedLinks = () => { try { return JSON.parse(localStorage.getItem('deskbuddy.links') || '[]'); } catch (e) { return []; } };
+  let stream = null, tryAt = 0, linkIndex = 0;
+  const connect = () => {
+    if (stream) stream.close();
+    stream = new EventSource(PC('events'));
+    stream.onmessage = e => {
+      const s = JSON.parse(e.data);
+      if (s.links && s.links.length && rateOk('links', 30000)) try { localStorage.setItem('deskbuddy.links', JSON.stringify(s.links)); } catch (err) {}
+      onState(s);
+      if (s.elsewhere && rateOk('follow', 20000)) {   // you moved to your other PC: follow you there
+        const port = location.port ? ':' + location.port : '';
+        pcBase = s.elsewhere.ip === location.hostname ? '' : `${location.protocol}//${s.elsewhere.ip}${port}/`;
+        say(`Following you to ${esc(s.elsewhere.name)} 👀`, 2500, 'happy'); tryAt = performance.now(); connect();
+      }
+    };
+  };
+  connect();
+  setInterval(() => {
+    if (performance.now() - lastMsg < 6000 || performance.now() - tryAt < 6000) return;
+    const port = location.port ? ':' + location.port : '', here = location.hostname;
+    const options = [''].concat(savedLinks().filter(l => l.ip !== here).map(l => `${location.protocol}//${l.ip}${port}/`));
+    linkIndex = (linkIndex + 1) % options.length;
+    pcBase = options[linkIndex]; tryAt = performance.now(); connect();
+  }, 2000);
 }
 
 // ---------- speech bubble (used sparingly - it mostly talks with its face) ----------
@@ -711,10 +751,12 @@ function think(now) {
   else if (sensor.flat) m = 'relaxed';   // lying on its back: it chills out
   else m = 'neutral';
   if (musicOn && ['neutral', 'drowsy', 'relaxed'].includes(m)) m = 'groove';   // nothing else going on: full dance mode
+  const f = feelingNow();   // when nothing else is going on, you can see how it feels inside
+  if (f && connected(now) && (m === 'neutral' || ((m === 'relaxed' || m === 'drowsy') && f.feeling !== 'joyful'))) m = f.feeling;
   if (P('typing') && state.typing >= 1.5 && ['neutral', 'focused', 'groove', 'drowsy'].includes(m)) m = 'typing';
   if (m !== baseMood) { onMoodChange(baseMood, m, now); baseMood = m; }
 
-  if (connected(now)) { checkGreeting(now); checkMedia(now); checkMail(); checkCalendar(); checkBond(); checkSignals(now); checkPatterns(now); checkLife(now); }
+  if (connected(now)) { checkGreeting(now); checkMedia(now); checkMail(); checkCalendar(); checkBond(); checkSignals(now); checkPatterns(now); checkLife(now); checkHeart(now); }
 
   // Break reminder. The PC resets "work" after 5 min away, which also counts as a break.
   if (state.work < breakAck) breakAck = 0;
@@ -722,8 +764,10 @@ function think(now) {
   if (due && !reminding && m !== 'sleeping' && m !== 'sleepy' && m !== 'meeting') { reminding = true; showReminder(true); }
   if (!due && reminding) { reminding = false; bubble.classList.remove('show'); }
 
-  const calm = (m === 'neutral' || m === 'drowsy' || m === 'focused') && !overridden() && !reminding && !touch && !quirkTimers.length && !tool && !menuOpen;
+  const calm = (m === 'neutral' || m === 'drowsy' || m === 'focused' || FEELINGS.includes(m)) && !overridden() && !reminding && !touch && !quirkTimers.length && !tool && !menuOpen;
   cheekyThink(now, m, calm);
+  feelingThink(now, m, calm);
+  expressions(now, m);
   if (calm && P('bedtime') && lateNight() && state.idle < 60 && now > nextBedtime) {
     nextBedtime = now + 20 * 60000;
     setOverride('sleepy', 2000); sfx.yawn(); say(pick(BED_LINES), 3500, false);
@@ -731,7 +775,7 @@ function think(now) {
   } else if (calm && friendship() >= 5 && now > nextGift) {   // best friends: a little heart, just because
     nextGift = now + (30 + Math.random() * 30) * 60000;
     setOverride('love', 2000); showIcon('💙', 2000); sfx.chirp();
-  } else if (calm && P('quirks') && now > nextQuirk) {
+  } else if (calm && P('quirks') && now > nextQuirk && !UPSET.includes(m)) {
     nextQuirk = now + (40000 + Math.random() * 60000) * trait().quirkEvery;
     const sleepyNow = lateNight() || m === 'drowsy' || trait().sleepy;
     QUIRKS[sleepyNow ? pick(['nodOff', 'nodOff', 'sneeze', 'hum']) : pick(['sneeze', 'hiccup', 'fly', 'fly', 'hum', 'nodOff'])]();
@@ -742,6 +786,128 @@ function think(now) {
 
   const next = overridden(null, now) ? override.mood : (reminding ? 'happy' : m);
   if (next !== mood) { mood = next; updateGlow(); }
+}
+
+// ---------- feelings: its needs (love, fun, energy) run on the PC all day, even with the phone off ----------
+// Ignore it for hours and it shows, in its own personality's way; some love and play bring it back.
+const FEELINGS = ['joyful', 'clingy', 'lonely', 'sad', 'annoyed', 'angry', 'tired', 'bored'];
+const UPSET = ['clingy', 'lonely', 'sad', 'annoyed', 'angry'];
+const FEEL_ICON = { joyful: '🥰', okay: '💙', clingy: '🥺', lonely: '🥺', sad: '😢', annoyed: '😒', angry: '😤', tired: '🪫', bored: '🥱' };
+const FEEL_LINES = {
+  clingy: ['Pet me? 🥺', 'Hey… hey… 👉👈', 'Got a minute for me? 🥺', 'Notice me! 👀'],
+  lonely: ['I miss you a little… 🥺', '…hi 👉👈', 'Kinda lonely here 🥺'],
+  sad: ['Nobody pets me anymore… 😢', '*sniff* 😢', "It's fine… I'm fine… 😢"],
+  annoyed: ['Hmph. Busy, huh? 😒', 'Oh sure, ignore me 😒', 'I exist too, you know 😒'],
+  angry: ["I'm NOT talking to you 😤", 'Hmph!! 😤', 'Pet me. Now. 😤'],
+  bored: ['Bored… play with me? 🎾', 'So… bored… 🥱', 'Throw me a ball? 🎾'],
+  tired: ['Low battery… snack? 🔋', 'So sleepy… 😪', 'Running on fumes 🪫'],
+  joyful: ['Best day ever 🥰', 'I like you a lot, you know 💙', 'Life is good ✨'],
+};
+const MAKE_UP = { angry: 'Okay… fine. I forgive you 😤💕', annoyed: "…okay, you're forgiven 😌", sad: 'You do care! 🥹💙',
+                  lonely: 'Yay, you noticed me! 🥰', clingy: 'Yay, attention! 🥰' };
+const feelingNow = () => { const h = P('needs') && state.heart; return h && h.feeling !== 'okay' ? h : null; };
+let nextFeel = performance.now() + 30000, steamUntil = 0, lastFeeling = null;
+
+function feelingThink(now, m, calm) {
+  if (!FEELINGS.includes(m) || !calm || now < nextFeel || state.idle > 60) return;
+  const strong = (feelingNow() || { strength: .5 }).strength;
+  nextFeel = now + (25000 + Math.random() * 40000) / (.6 + strong);   // stronger feelings show more often
+  const talk = rateOk('feel', 240000 / (.5 + strong)), line = () => talk && say(pick(FEEL_LINES[m]), 3200, false);
+  if (m === 'clingy') { QUIRKS.wave(); talk ? say(pick(FEEL_LINES.clingy), 3000, 'question') : sfx.question(); }
+  else if (m === 'lonely') { hold(0, .15, 2500); sfx.sad(); line(); }
+  else if (m === 'sad') { sfx.sad(); hold(grumpySide * .3, .5, 3000); line(); }
+  else if (m === 'annoyed') { grumpySide = -grumpySide; sfx.hmph(); line(); }
+  else if (m === 'angry') { grumpySide = -grumpySide; bounceV = -4; sfx.hmph(); steamUntil = now + 2500; line(); }
+  else if (m === 'bored') { Math.random() < .5 ? eyeRoll() : sfx.yawn(); line(); }
+  else if (m === 'tired') { sfx.yawn(); setOverride('sleepy', 1800); line(); }
+  else if (m === 'joyful') {
+    if (Math.random() < .4) QUIRKS.hum(); else { setOverride('giggle', 1200); bounceV = -4; sfx.giggle(); }
+    if (Math.random() < .4) line();
+  }
+}
+const eyeRoll = () => play([[0, () => hold(-.6, -.5, 300)], [250, () => hold(0, -.8, 300)], [500, () => hold(.6, -.5, 300)], [750, () => { hold(0, .1, 600); sfx.hmm(); }]]);
+
+// Feelings change on the PC; react when they get better (made up!), and catch up after time apart.
+function checkHeart(now) {
+  const f = (P('needs') && state.heart && state.heart.feeling) || 'okay';
+  if (lastFeeling && UPSET.includes(lastFeeling) && (f === 'okay' || f === 'joyful') && state.idle < 60 && !tool) {
+    cancelQuirk(); setOverride('love', 2600); sparkleUntil = now + 2600; bounceV = -5; sfx.laugh();
+    say(MAKE_UP[lastFeeling], 3000, false);
+  }
+  lastFeeling = f;
+  const c = state.catchup;
+  if (!c || !P('catchup') || greetAfter || overridden() || tool || bubble.classList.contains('show') || state.idle > 30) return;
+  if (store.get('catchup') === String(c.id)) return;
+  store.set('catchup', c.id);
+  const parts = c.top.map(t => `${t.emoji} ${t.label} ${dur(t.minutes)}`);
+  if (c.songs) parts.push(`🎵 ${c.songs} song${c.songs > 1 ? 's' : ''}`);
+  if (c.mails) parts.push(`📧 ${c.mails} email${c.mails > 1 ? 's' : ''}`);
+  const away = dur(c.minutes), opener = {
+    angry: `${away} and not one pet?! 😤`, annoyed: 'Oh, NOW you look at me 😒', sad: 'I missed you… 😢',
+    clingy: "You're back!! 🥺", lonely: "You're back… 🥺", tired: 'Yawn… welcome back 🪫', joyful: 'Welcome back! 🥰',
+  }[f] || "Welcome back! I saw what you've been up to 👀";
+  if (UPSET.includes(f)) { setOverride(f === 'clingy' || f === 'lonely' ? 'clingy' : f, 3000); sfx.hmph(); }
+  else { QUIRKS.wave(); }
+  say(opener + (parts.length ? `<br><small>While my screen was off: ${parts.join(' · ')}</small>` : ''), 6500, false);
+}
+
+// Little expressions, so it never looks the same for long: glances, winks, a lazy look, a thinking look…
+const EXPRS = {
+  glance:  { d: { lidL: .1, lidR: .1 }, look: () => ({ x: pick([-.8, .8]), y: -.1 }), ms: 900 },
+  lazy:    { d: { lidL: .22, lidR: .22, h: -.08 }, ms: 2200 },
+  wink:    { d: { lidL: .85, happy: .15 }, ms: 420 },
+  think:   { d: { lidL: .25, tilt: .08 }, look: () => ({ x: .5, y: -.65 }), ms: 1800 },
+  wide:    { d: { w: .08, h: .12 }, ms: 900 },
+  smile:   { d: { happy: .3 }, ms: 1500 },
+  skeptic: { d: { lidR: .35, lidL: -.05 }, ms: 1300 },
+  squish:  { d: { w: .1, h: -.15 }, ms: 500 },
+  peek:    { d: { h: -.1 }, look: () => ({ x: 0, y: .6 }), ms: 1000 },
+  slowBlink: { slow: true, ms: 700 }, doubleBlink: { double: true, ms: 500 },
+};
+const EXPR_MIX = {   // which expressions suit which personality and feeling
+  cheerful: ['smile', 'smile', 'wink', 'wide', 'glance', 'doubleBlink'], shy: ['peek', 'peek', 'lazy', 'glance', 'smile', 'slowBlink'],
+  hyper: ['wide', 'wide', 'squish', 'glance', 'doubleBlink', 'wink'], sleepy: ['lazy', 'lazy', 'slowBlink', 'think', 'smile'],
+  grumpy: ['skeptic', 'skeptic', 'lazy', 'glance', 'think'],
+  joyful: ['smile', 'wink', 'squish'], bored: ['lazy', 'think', 'glance'], tired: ['lazy', 'slowBlink'],
+};
+let expr = null, nextExpr = performance.now() + 6000, blinkDur = 160;
+function expressions(now, m) {
+  if (expr && now > expr.until) expr = null;
+  const ok = ['neutral', 'focused', 'relaxed', 'drowsy', 'joyful', 'bored', 'tired', 'lonely', 'clingy', 'annoyed'].includes(m);
+  if (!ok || overridden() || touch || tool || quirkTimers.length) { expr = null; return; }
+  if (now < nextExpr) return;
+  nextExpr = now + (4000 + Math.random() * 7000) * (trait().hyper ? .6 : 1);
+  const mix = EXPR_MIX[m] || EXPR_MIX[(state.buddy && state.buddy.personality) || 'cheerful'] || EXPR_MIX.cheerful;
+  const name = Math.random() < .25 ? pick(Object.keys(EXPRS)) : pick(mix), e = EXPRS[name];
+  if (e.slow) { blinkStart = now; blinkDur = 520; nextBlink = now + 3000; return; }
+  if (e.double) { blinkStart = now; nextBlink = now + 260; return; }
+  expr = { d: e.d, lookAt: e.look && e.look(), until: now + e.ms };
+}
+
+// Tears, steam and other signs of how it feels.
+function drawFeelings(now, cx, cy, gap, color) {
+  const f = feelingNow(), strength = f ? f.strength : .5, top = cy - S / 2, rx = cx + gap;
+  if (mood === 'sad') {
+    for (const side of [-1, 1]) for (let i = 0; i < 2; i++) {
+      const p = (now / 1700 + i * .5 + (side > 0 ? .25 : 0)) % 1, d = S * .05;
+      const x = cx + side * gap + side * S * .22, y = cy + S * cur.h * .38 + p * S * .55;
+      ctx.globalAlpha = (1 - p) * (.4 + .6 * strength); ctx.fillStyle = 'rgb(130,200,255)';
+      ctx.beginPath(); ctx.moveTo(x, y - d * 1.4);
+      ctx.bezierCurveTo(x + d, y - d * .2, x + d * .7, y + d, x, y + d);
+      ctx.bezierCurveTo(x - d * .7, y + d, x - d, y - d * .2, x, y - d * 1.4); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  } else if (mood === 'angry') {
+    floaty('💢', cx - grumpySide * gap * 1.55, top, S * .3, .9, color);
+    if (now < steamUntil || strength > .8) for (const side of [-1, 1]) for (let i = 0; i < 3; i++) {   // steam puffs
+      const p = (now / 900 + i / 3) % 1;
+      ctx.globalAlpha = (1 - p) * .55; ctx.fillStyle = 'rgb(225,230,235)';
+      ctx.beginPath(); ctx.arc(cx + side * gap * (1.35 + p * .3), top - p * S * .5, S * (.06 + p * .08), 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  } else if (mood === 'tired') floaty('🪫', rx + S * .62, top + S * .05, S * .28, .8, color);
+  else if (mood === 'bored' && now % 6000 < 2500) floaty('…', rx + S * .55, top, S * .35, .6, color);
+  else if (mood === 'clingy' && now % 5000 < 2000) floaty('🥺', rx + S * .62, top + S * .05, S * .26, .8, color);
 }
 
 // ---------- quirks: little things it does on its own ----------
@@ -810,21 +976,80 @@ function beat(now) {
   if (++beats % 4 === 0) blinkStart = now;   // eyes close on the beat now and then, really feeling it
 }
 
-// Dancing in time: lands on every beat, sways left-right over two beats, squashes a little on landing.
+// Dancing in time. The PC sends the beat plus the shape of the song (how loud it is right now
+// compared with the rest, build-ups, drops, quiet breaks, big hits), and it picks moves to match:
+// a dreamy sway for soft songs, bounces and twists for most, headbanging and hops when it's loud and fast.
 // Runs under every mood (reading with music = glasses AND dancing), and inside tools too.
-let dance = { x: 0, y: 0, tilt: 0, squash: 0, sway: 0 }, lastBeatCount = null;
+const MOVES = {
+  bounce:   (c, p, sw) => ({ x: .1 * sw, y: -.07 * Math.abs(Math.sin(Math.PI * p)), tilt: .06 * sw, squash: Math.max(0, 1 - p * 6) * .1 }),
+  sway:     (c, p) => { const w = Math.sin(Math.PI * (c + p) / 2); return { x: .16 * w, y: -.02 * Math.abs(w), tilt: .1 * w, lid: .3 }; },
+  headbang: (c, p) => ({ y: .12 * (p < .2 ? p / .2 : 1 - (p - .2) / .8), tilt: .03 * Math.sin(Math.PI * c), squash: Math.max(0, 1 - p * 5) * .15, lid: .25 }),
+  wiggle:   (c, p, sw) => ({ x: .07 * Math.sin(p * Math.PI * 4), y: -.03 * Math.abs(Math.sin(Math.PI * p)), tilt: .03 * sw }),
+  twist:    (c, p, sw) => ({ x: -.05 * sw, tilt: .15 * sw, squash: Math.max(0, 1 - p * 6) * .06 }),
+  hop:      (c, p) => ({ y: -.2 * Math.sin(Math.PI * ((c % 2) + p) / 2), squash: c % 2 === 0 && p < .12 ? .14 : 0 }),
+};
+const MOVE_POOLS = {
+  soft: ['sway', 'sway', 'twist'], mid: ['bounce', 'bounce', 'twist', 'wiggle', 'hop'], hype: ['headbang', 'headbang', 'hop', 'wiggle', 'bounce'],
+};
+let dance = { x: 0, y: 0, tilt: 0, squash: 0, sway: 0, lid: 0, rot: 0 }, lastBeatCount = null;
+let move = 'bounce', moveUntilBeat = 0, lastHit = 0, hitPulse = 0, lastDrop = 0, dropAt = -1e9;
 function danceTick() {
-  dance = { x: 0, y: 0, tilt: 0, squash: 0, sway: swing };
+  const now = performance.now();
+  dance = { x: 0, y: 0, tilt: 0, squash: 0, sway: swing, lid: 0, rot: 0 };
   if (!musicOn || quiet()) return;
-  const bp = beatPhase();
+  const bp = beatPhase(), b = state.beat || {}, fx = P('danceFx');
   if (!bp) { dance.tilt = swing * .06; return; }
-  const amp = trait().bounce * (mood === 'groove' ? 1 : .6), sway = Math.sin(Math.PI * (bp.count + bp.phase));
-  dance = { x: S * .1 * sway * amp, y: -S * .07 * amp * Math.abs(Math.sin(Math.PI * bp.phase)),
-            tilt: .06 * sway * amp, squash: Math.max(0, 1 - bp.phase * 6) * .1, sway };
   if (bp.count !== lastBeatCount) {
     lastBeatCount = bp.count;
-    if (bp.count % 4 === 0 && mood === 'groove') blinkStart = performance.now();   // eyes shut on the downbeat now and then
+    if (bp.count >= moveUntilBeat || bp.count < moveUntilBeat - 8) {   // a new move every two bars, to suit the song
+      const pool = b.calm || (b.energy ?? 1) < .45 || (b.bpm || 120) < 92 ? 'soft' : (b.energy ?? 0) > .8 && ((b.bpm || 0) >= 118 || b.busy > 1.4) ? 'hype' : 'mid';
+      const t = trait(), choices = MOVE_POOLS[pool].concat(t.sleepy ? ['sway'] : t.hyper ? ['hop', 'headbang'] : t.shy ? ['sway', 'twist'] : []);
+      const fresh = choices.filter(m => m !== move);
+      move = fx ? pick(fresh.length ? fresh : choices) : 'bounce';
+      moveUntilBeat = bp.count + 8;
+    }
+    if (bp.count % 4 === 0 && mood === 'groove' && move !== 'headbang') blinkStart = now;   // eyes shut on the downbeat now and then
   }
+  const amp = trait().bounce * (mood === 'groove' ? 1 : .6), sw = Math.sin(Math.PI * (bp.count + bp.phase));
+  const m = MOVES[move](bp.count, bp.phase, sw);
+  dance = { x: S * (m.x || 0) * amp, y: S * (m.y || 0) * amp, tilt: (m.tilt || 0) * amp, squash: m.squash || 0, sway: sw,
+            lid: mood === 'groove' ? m.lid || 0 : 0, rot: 0 };
+  if (!fx) return;
+  if (b.hit && b.hit !== lastHit) { lastHit = b.hit; hitPulse = 1; }   // a big hit (kick): squash and a flash of the lights
+  hitPulse *= .9; dance.squash += hitPulse * .08;
+  if (b.build > .3 && mood === 'groove') {   // the build-up: shaking with excitement
+    dance.x += (Math.random() - .5) * S * .03 * b.build; dance.lid -= .15 * b.build;
+  }
+  if (b.drop && b.drop !== lastDrop) {
+    const fresh = lastDrop && Date.now() - clockOffset - b.drop < 3000;   // ignore a drop from before we joined
+    lastDrop = b.drop;
+    if (fresh && mood === 'groove') { dropAt = now; sparkleUntil = now + 2500; flashUntil = now + 200; bounceV = -7; }
+  }
+  const sp = (now - dropAt) / 700;   // the drop: a full spin
+  if (sp < 1) dance.rot = Math.PI * 2 * (1 - Math.pow(1 - sp, 3));
+}
+
+// Party lights while it dances: soft colored beams sweeping behind it and a little equalizer along the bottom.
+function drawDisco(now) {
+  if (!musicOn || mood !== 'groove' || !P('danceFx') || quiet()) return;
+  const bp = beatPhase(), pulse = .5 + .5 * hitPulse, colors = ['255,90,200', '90,200,255', '255,220,90', '130,255,170'];
+  ctx.save();
+  for (let i = 0; i < 4; i++) {
+    const a = now / 2600 + i * Math.PI / 2, x = W / 2 + Math.sin(a) * W * .45;
+    const g = ctx.createLinearGradient(W / 2, -H * .1, x, H);
+    g.addColorStop(0, `rgba(${colors[i]},${.14 * pulse})`); g.addColorStop(1, `rgba(${colors[i]},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(W / 2 - S * .05, -H * .1); ctx.lineTo(W / 2 + S * .05, -H * .1); ctx.lineTo(x + S * .6, H); ctx.lineTo(x - S * .6, H); ctx.closePath(); ctx.fill();
+  }
+  const n = 16, bw = W / n, level = Math.min(1, (state.audio || 0) * 1.4);
+  for (let i = 0; i < n; i++) {
+    const wave = .5 + .5 * Math.sin(i * 1.7 + now / 140) * Math.sin(i * .6 - now / 330);
+    const beatBoost = bp ? Math.max(0, 1 - bp.phase * 3) * (i < n / 3 ? 1 : .4) : 0;   // the low bars jump on the beat
+    const h = H * .12 * Math.min(1, level * (.35 + .65 * wave) + beatBoost * .5);
+    ctx.fillStyle = `rgba(${colors[i % 4]},.18)`;
+    ctx.fillRect(i * bw + bw * .2, H - h, bw * .6, h);
+  }
+  ctx.restore();
 }
 
 // Movie night: a popcorn bucket, and every few seconds a piece flies up to be munched.
@@ -1010,9 +1235,10 @@ function floaty(text, x, y, size, alpha, color) {
 function draw(now, blink) {
   ctx.clearRect(0, 0, W, H);
   drawEnvironment(now);
+  drawDisco(now);
   const color = `rgb(${col.map(Math.round)})`;
   ctx.save();
-  const rot = Math.sin(now / 180) * .12 * cur.spiral + faceTilt;   // dizzy wobble, or swaying to music
+  const rot = Math.sin(now / 180) * .12 * cur.spiral + faceTilt + dance.rot;   // dizzy wobble, swaying to music, or a spin on the drop
   if (rot) { ctx.translate(W / 2, H / 2); ctx.rotate(rot); ctx.translate(-W / 2, -H / 2); }
   const jitter = mood === 'stressed' ? S * 0.012 : 0;
   const breathe = (mood === 'sleeping' || mood === 'sleepy' || mood === 'dozy') ? Math.sin(now / 900) * S * .04 : 0;
@@ -1020,7 +1246,7 @@ function draw(now, blink) {
   const watching = mood === 'watching';
   const cx = W / 2 + look.x * S * .45 + (Math.random() - .5) * jitter + wobble + dance.x;
   const cy = H / 2 + look.y * S * .3 + breathe + bounce * S * .5 + dance.y - (hudOn ? S * .06 : 0) - (watching ? S * .12 : 0);
-  const gap = S * .72;
+  const gap = S * (now < crossUntil ? .5 : .72);   // boop: cross-eyed for a moment
   const sparkle = Math.max(cur.sparkle, now < sparkleUntil ? 1 : 0);
   const munch = watching && munching(now);
   let ink = color;
@@ -1044,6 +1270,8 @@ function draw(now, blink) {
     }
   }
   drawAccessories(cx, cy, gap, now);
+  drawFeelings(now, cx, cy, gap, color);
+  drawSnack(now, cx, cy, color);
   if (g === 'girl' && cur.spiral < .5 && !has('birthday') && !has('christmas') && !has('halloween') && !has('newyear')) drawBow(cx + gap + S * .3, cy - S * cur.h * .5 - S * .13);
   if (watching) drawPopcorn(now, cx, cy, color);
   if (cur.glasses > .02) drawGlasses(W / 2 + look.x * S * .12, cy, gap, cur.glasses);
@@ -1098,6 +1326,7 @@ function draw(now, blink) {
   }
   ctx.restore();
 
+  drawBall();
   if (now - flyStart < 6000) {   // the fly, drawn outside the wobble
     const f = flyPos(now), x = W / 2 + f.x * W * .45, y = H / 2 + f.y * H * .4, r = S * .05;
     ctx.fillStyle = 'rgba(225,240,255,.6)';   // flapping wings
@@ -1136,19 +1365,26 @@ const pomoLeft = () => { const p = kit.pomo; return p.end ? p.end - Date.now() :
 const watchTime = () => kit.watch.acc + (kit.watch.start ? Date.now() - kit.watch.start : 0);
 
 const menu = $('menu');
-function openMenu(x, y) {
+let menuAt = { x: 0, y: 0 };
+function openMenu(x, y, which) {
   menuOpen = true; cancelQuirk(); override = null;
-  const items = Object.entries(TOOLS), R = Math.min(118, Math.min(W, H) * .32);
+  const items = which === 'snacks' ? Object.entries(SNACKS).map(([k, s]) => [k, s, 'snack'])
+    : Object.entries(TOOLS).map(([k, t]) => [k, t, 'tool']).concat(tool ? [] : [['ball', { icon: '🎾', label: 'Ball' }, 'play'], ['snacks', { icon: '🍪', label: 'Snacks' }, 'play']]);
+  const R = Math.min(which === 'snacks' ? 90 : 128, Math.min(W, H) * .34);
   const cx = clamp(x, R + 44, W - R - 44), cy = clamp(y, R + 44, H - R - 44);
-  menu.innerHTML = items.map(([k, t], i) => {
+  menuAt = { x, y };
+  menu.innerHTML = items.map(([k, t, type], i) => {
     const a = -Math.PI / 2 + i / items.length * Math.PI * 2, bx = cx + Math.cos(a) * R, by = cy + Math.sin(a) * R;
-    return `<button class="mbtn" data-tool="${k}" style="left:${bx}px;top:${by}px;--fx:${cx - bx}px;--fy:${cy - by}px;animation-delay:${i * 35}ms"><span>${t.icon}</span><small>${t.label}</small></button>`;
+    return `<button class="mbtn" data-${type}="${k}" style="left:${bx}px;top:${by}px;--fx:${cx - bx}px;--fy:${cy - by}px;animation-delay:${i * 35}ms"><span>${t.icon}</span><small>${t.label}</small></button>`;
   }).join('') + `<button class="mbtn close" data-tool="" style="left:${cx}px;top:${cy}px;--fx:0px;--fy:0px"><span>${tool ? '🙂' : '✖'}</span><small>${tool ? 'Buddy' : 'Close'}</small></button>`;
   menu.classList.add('on');
   pluck(988, 0, .04, .6); pluck(1319, .07, .04, .6);
 }
 function closeMenu() { menuOpen = false; menu.classList.remove('on'); }
 menu.addEventListener('click', e => {
+  const sn = e.target.closest('[data-snack]'), pl = e.target.closest('[data-play]');
+  if (pl && pl.dataset.play === 'snacks') return openMenu(menuAt.x, menuAt.y, 'snacks');
+  if (pl || sn) { closeMenu(); return pl ? startBall() : giveTreat(sn.dataset.snack); }
   const b = e.target.closest('[data-tool]');
   closeMenu();
   if (b) b.dataset.tool ? startTool(b.dataset.tool) : (tool ? endTool() : sfx.chirp());
@@ -1555,7 +1791,7 @@ function reportCaps(force) {
   const caps = { secure: SECURE, motion: sensor.motion, mic: sensor.mic }, key = JSON.stringify(caps);
   if (key === lastCaps && !force) return;
   lastCaps = key; nextCapsReport = performance.now() + 60000;
-  fetch('phone-status', { method: 'POST', body: key }).catch(() => {});
+  fetch(PC('phone-status'), { method: 'POST', body: key }).catch(() => {});
 }
 
 // ---------- Cheeky mode: playful teasing (off unless you turn it on in the dashboard) ----------
@@ -1765,7 +2001,7 @@ function reportTools() {
     pomo: { phase: p.phase, left: pomoLeft(), running: !!p.end, paused: !!p.pausedLeft, round: p.round },
     dice: { mode: d.mode, faces: d.faces, coin: d.coin, rolling: !d.landed },
   };
-  fetch('phone-status', { method: 'POST', body: JSON.stringify({ tools }) }).catch(() => {});
+  fetch(PC('phone-status'), { method: 'POST', body: JSON.stringify({ tools }) }).catch(() => {});
 }
 
 // Spinner eyes for "loading…": a ring of dots chasing each other.
@@ -1998,6 +2234,8 @@ function frame(now) {
 
   // Where to look.
   if (touch) lookT = { x: clamp((touch.lx / W * 2 - 1) * 1.3, -1, 1), y: clamp((touch.ly / H * 2 - 1) * 1.3, -1, 1) };
+  else if (ball) lookT = { x: clamp((ball.x / W * 2 - 1) * 1.3, -1, 1), y: clamp((ball.y / H * 2 - 1) * 1.3, -1, 1) };   // eyes on the ball
+  else if (snack) lookT = { x: 0, y: .6 };
   else if (mood === 'sleeping' || mood === 'dozy') lookT = { x: 0, y: .15 };
   else if (lookHold && now < lookHold.until) lookT = { x: lookHold.x, y: lookHold.y };
   else if (now - flyStart < 6000) lookT = flyPos(now);
@@ -2014,9 +2252,18 @@ function frame(now) {
   else if (mood === 'meeting' && now - lastMove > 1500) lookT = { x: 0, y: .1 };
   else if (motionOn && !sensor.flat && Math.hypot(sensor.tiltX, sensor.tiltY) > .18) lookT = { x: sensor.tiltX * 1.4, y: sensor.tiltY * 1.4 };   // eyes roll downhill like marbles
   else if (mood === 'relaxed') lookT = { x: 0, y: -.45 };   // gazing up at the ceiling
+  else if (mood === 'sad') lookT = { x: grumpySide * .3, y: .45 };                        // downcast
+  else if (mood === 'annoyed') lookT = { x: grumpySide * .85, y: 0 };                     // side-eye
+  else if (mood === 'angry') lookT = { x: grumpySide * .9, y: .1 };                       // turned away from you
+  else if (mood === 'tired') lookT = { x: 0, y: .3 };
+  else if (mood === 'bored' && now - lastMove > 1500) lookT = { x: Math.sin(now / 2500) * .7, y: -.3 };
   else if (connected(now) && now - lastMove < 2500 && now < wrongWayUntil) lookT = { x: -clamp(state.x, -1, 1), y: -clamp(state.y, -1, 1) };   // Cheeky: the wrong way, on purpose
   else if (connected(now) && now - lastMove < 2500) lookT = { x: clamp(state.x, -1, 1), y: clamp(state.y, -1, 1) };
-  else if (now > nextSaccade) {
+  else if (expr && expr.lookAt) lookT = expr.lookAt;
+  else if ((mood === 'clingy' || mood === 'lonely') && now > nextSaccade) {   // keeps looking at you, hopefully
+    nextSaccade = now + 1500 + Math.random() * 2000;
+    lookT = { x: (Math.random() - .5) * .2, y: mood === 'lonely' ? .1 : -.1 };
+  } else if (now > nextSaccade) {
     nextSaccade = now + (1200 + Math.random() * 3000) * (trait().hyper ? .5 : 1);
     lookT = Math.random() < .35 ? { x: 0, y: 0 } : { x: (Math.random() * 2 - 1) * .7, y: (Math.random() * 2 - 1) * .5 };
   }
@@ -2030,25 +2277,31 @@ function frame(now) {
     }
     if (now - touch.t > HOLD_MS && (P('toolbox') || tool)) { const { lx, ly } = touch; touch = null; openMenu(lx, ly); }
   }
+  if (hugAt && fingers.size >= 2 && now >= hugAt) hug();
+  ballTick(now, dt);
   toolTick(now);
   listen(now);
   if (DEMO && mood === 'groove' && !songPlaying() && now - lastBeat > 500) beat(now);   // mood-button demo has no music
   if (mood === 'sleeping' && now > nextSnore) { nextSnore = now + 3800; sfx.snore(); }
 
-  const T = MOODS[mood], frown = mood === 'neutral' ? trait().frown : 0;
+  const T = MOODS[mood], ed = { ...((expr && expr.d) || {}) }, inner = feelingNow();
+  if (dance.lid) { ed.lidL = (ed.lidL || 0) + dance.lid; ed.lidR = (ed.lidR || 0) + dance.lid; }   // dreamy sway / headbang squint
+  const frown = (mood === 'neutral' ? trait().frown : 0)
+    + (inner && ['annoyed', 'angry'].includes(inner.feeling) && ['focused', 'typing', 'reading'].includes(mood) ? .2 : 0);   // still cross while you work
   const ks = 1 - Math.exp(-dt * 8), kl = 1 - Math.exp(-dt * (mood === 'focused' ? 18 : mood === 'reading' ? 6 : 12));
-  for (const k of ['w', 'h', 'lidL', 'lidR', 'happy', 'sparkle', 'spiral', 'glasses']) cur[k] += (T[k] - cur[k]) * ks;
-  cur.tilt += (T.tilt + frown - cur.tilt) * ks;
+  for (const k of ['w', 'h', 'lidL', 'lidR', 'happy', 'sparkle', 'spiral', 'glasses']) cur[k] += (T[k] + (ed[k] || 0) - cur[k]) * ks;
+  cur.tilt += (T.tilt + (ed.tilt || 0) + frown - cur.tilt) * ks;
   for (let i = 0; i < 3; i++) col[i] += (T.color[i] - col[i]) * ks;
   look.x += (lookT.x - look.x) * kl; look.y += (lookT.y - look.y) * kl;
   danceTick();
   faceTilt += (dance.tilt - faceTilt) * (1 - Math.exp(-dt * 10));
 
   if (now > nextBlink && mood !== 'sleeping' && mood !== 'dizzy') {
-    blinkStart = now;
+    blinkStart = now; blinkDur = 160;
     nextBlink = now + (Math.random() < .15 ? 260 : 2000 + Math.random() * 4500);
   }
-  const bt = (now - blinkStart) / 160;
+  if (mood === 'clingy' && Math.random() < dt * .6) bounceV -= 2;   // little hopeful hops
+  const bt = (now - blinkStart) / blinkDur;
   const blink = bt < 1 ? 1 - .92 * Math.sin(bt * Math.PI) : 1;
 
   bounceV += (-140 * bounce - 9 * bounceV) * dt;
@@ -2063,6 +2316,90 @@ function frame(now) {
     ctx.fillStyle = `rgba(255,255,255,${(flashUntil - now) / 260 * .85})`; ctx.fillRect(0, 0, W, H);
   }
   requestAnimationFrame(frame);
+}
+
+// ---------- snacks and a ball to play with ----------
+const SNACKS = {
+  cookie:   { icon: '🍪', label: 'Cookie',    line: () => pick(['Yum! 😋', 'Cookie!! 🍪😋', 'Crunchy! 😋']) },
+  icecream: { icon: '🍦', label: 'Ice cream', line: () => pick(['Brain freeze! 🥶🍦', 'Sooo good 🍦😋']) },
+  battery:  { icon: '🔋', label: 'Battery',   line: () => pick(['⚡ Charging… ahh, much better!', 'Full power! ⚡😄']) },
+};
+let snack = null;   // { kind, start }
+function giveTreat(kind) {
+  if (snack || tool) return;
+  closeSheet(); cancelQuirk();
+  snack = { kind, start: performance.now() };
+  hold(0, .6, 900); setOverride('curious', 900);   // spots it coming...
+  fetch(PC('bond'), { method: 'POST', body: kind }).then(r => r.json()).catch(() => ({ ok: true })).then(r => {
+    if (DEMO) r = { ok: true };
+    play([[900, () => {
+      if (r.ok === false) {   // had three already today
+        snack = null; setOverride('dizzy', 1400); sfx.hmm();
+        say(pick(["I'm full! 😵 Maybe tomorrow", 'No more… my tummy… 😵']), 2500, false);
+        return;
+      }
+      setOverride(kind === 'battery' ? 'surprised' : 'happy', 1400); sfx.chirp();
+      play([[300, () => sfx.giggle()], [700, () => sfx.chirp()], [1300, () => {
+        snack = null; setOverride('love', 1800); bounceV = -5; sparkleUntil = performance.now() + 1500;
+        say(SNACKS[kind].line(), 2200, false);
+      }]]);
+    }]]);
+  });
+}
+function drawSnack(now, cx, cy, color) {
+  if (!snack) return;
+  const t = now - snack.start, s = SNACKS[snack.kind], mouth = { x: cx, y: cy + S * .62 };
+  if (t < 900) {   // flies up from the bottom of the screen
+    const p = t / 900, e = 1 - Math.pow(1 - p, 3);
+    floaty(s.icon, mouth.x, H + S * .3 - (H + S * .3 - mouth.y) * e, S * .45, 1, color);
+  } else {   // three bites, then gone
+    const bites = Math.min(3, Math.floor((t - 900) / 450));
+    ctx.save(); ctx.beginPath(); ctx.rect(mouth.x - S, mouth.y - S, S * 2 * (1 - bites / 4), S * 2); ctx.clip();
+    floaty(s.icon, mouth.x, mouth.y, S * .45 * (1 - bites * .12), 1, color); ctx.restore();
+    for (let i = 0; i < 5; i++) {   // crumbs (or sparks)
+      const q = ((t - 900) / 600 + i / 5) % 1;
+      ctx.globalAlpha = 1 - q; ctx.fillStyle = snack.kind === 'battery' ? 'rgb(255,240,120)' : 'rgb(220,170,110)';
+      ctx.beginPath(); ctx.arc(mouth.x + (i - 2) * S * .1, mouth.y + q * S * .5, S * .025, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// A ball: fling it around, and it watches it and headbutts it back when it comes close.
+let ball = null;   // { x, y, vx, vy, held, lastTouch, played }
+function startBall() {
+  closeSheet(); closeMenu(); cancelQuirk(); if (tool) endTool();
+  ball = { x: W * .2, y: H * .3, vx: W * .6, vy: -H * .2, held: null, lastTouch: performance.now(), played: false };
+  setOverride('surprised', 700); sfx.chirp();
+  say('Ball!! 🎾 Fling it to me!', 2200, false);
+}
+function ballTick(now, dt) {
+  if (!ball) return;
+  if (ball.held) return;
+  const r = S * .16;
+  ball.vy += H * 1.6 * dt; ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+  if (ball.x < r) { ball.x = r; ball.vx = Math.abs(ball.vx) * .8; }
+  if (ball.x > W - r) { ball.x = W - r; ball.vx = -Math.abs(ball.vx) * .8; }
+  if (ball.y < r) { ball.y = r; ball.vy = Math.abs(ball.vy) * .8; }
+  if (ball.y > H - r) { ball.y = H - r; ball.vy = -Math.abs(ball.vy) * .72; ball.vx *= .92; if (Math.abs(ball.vy) > H * .3) pluck(330, 0, .03, .3); }
+  if (Math.hypot(ball.x - W / 2, ball.y - H / 2) < S * .85 && ball.vy > -H * .2 && rateOk('headbutt', 600)) {   // headbutt!
+    ball.vy = -H * (1.1 + Math.random() * .3); ball.vx = (ball.x < W / 2 ? -1 : 1) * W * (.3 + Math.random() * .4);
+    bounceV = -7; setOverride('giggle', 700); sfx.giggle();
+    if (!ball.played) { ball.played = true; tellPC('ball'); }
+  }
+  if (now - ball.lastTouch > 25000) {   // nobody's playing anymore
+    ball = null; setOverride('happy', 1500); say('That was fun! 🎾', 2000, false);
+  }
+}
+function drawBall() {
+  if (!ball) return;
+  const r = S * .16, spin = ball.x / r;
+  ctx.save(); ctx.translate(ball.x, ball.y); ctx.rotate(spin);
+  ctx.fillStyle = 'rgb(205,240,80)'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = r * .12;
+  ctx.beginPath(); ctx.arc(-r * 1.2, 0, r * .9, -.9, .9); ctx.stroke();
+  ctx.beginPath(); ctx.arc(r * 1.2, 0, r * .9, Math.PI - .9, Math.PI + .9); ctx.stroke();
+  ctx.restore();
 }
 
 // ---------- touch: poke, pet, tickle, hold ----------
@@ -2083,7 +2420,7 @@ if (!DEMO) {
   keepAwake();
 }
 
-let touch = null, pokes = [];
+let touch = null, pokes = [], crossUntil = 0, fingers = new Set(), hugAt = 0;
 const tickleSpot = { x: .2 + Math.random() * .6, y: .7 + Math.random() * .2 };   // a secret spot, new every time
 
 function poke(x, y) {
@@ -2095,6 +2432,14 @@ function poke(x, y) {
   } else if (mood === 'sleeping') {
     if (t.sleepy) { setOverride('grumpy', 2000); say('Five more minutes… 😴', 2500, 'grumpy'); }
     else { setOverride('surprised', 1200); say('Huh?! I was just resting my eyes…', 2500, 'question'); }
+  } else if (baseMood === 'angry' || baseMood === 'annoyed') {   // upset: pokes don't help, petting does
+    grumpySide = -grumpySide; sfx.hmph();
+    if (rateOk('pokeUpset', 8000)) say(baseMood === 'angry' ? "Don't poke me. Pet me 😤" : '😒', 1800, false);
+  } else if (Math.hypot(x - W / 2, y - H / 2) < S * .32 && !overridden('grumpy', now)) {   // boop! right between the eyes
+    crossUntil = now + 1100; setOverride('surprised', 1100); sfx.surprise(); bounceV = -3;
+    play([[1100, () => { setOverride('giggle', 1000); sfx.giggle(); }]]);
+    if (rateOk('boop', 4000)) say('Boop! 😵', 1300, false);
+    tellPC('boop');
   } else if (Math.hypot(x - tickleSpot.x * W, y - tickleSpot.y * H) < S * .45) {
     setOverride('giggle', 2600); sfx.laugh();   // found the tickle spot!
     play([300, 650, 1000, 1350, 1700].map(ms => [ms, () => bounceV = -4]));
@@ -2120,29 +2465,70 @@ addEventListener('pointerdown', e => {
   kit.timer.alarmUntil = 0;
   if (!tool) cancelQuirk();
   if (!micWanted && !DEMO) { micWanted = true; syncSensors(); }   // sensors/mic may only start after a first tap
+  fingers.add(e.pointerId);
+  if (ball && !tool && Math.hypot(e.clientX - ball.x, e.clientY - ball.y) < S * .5) {   // grab the ball
+    ball.held = { x: e.clientX, y: e.clientY, t: performance.now(), vx: 0, vy: 0 }; ball.lastTouch = performance.now(); touch = null; return;
+  }
+  if (fingers.size === 2 && !tool && !menuOpen) { hugAt = performance.now() + 450; return; }   // two fingers: a hug, if they stay
   if (!tool && !menuOpen && cheekyDodge(e.clientX)) { touch = null; return; }
-  touch = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), silenced,
-            dist: 0, moved: false, petting: false, petStart: 0, curious: false, forgive: 0, lastPurr: 0 };
+  // Where you touch it matters: above the eyes is a head pat, below them a chin scratch.
+  const zone = e.clientY < H / 2 - S * .55 ? 'pat' : e.clientY > H / 2 + S * .55 ? 'chin' : 'pet';
+  touch = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), silenced, zone,
+            dist: 0, moved: false, petting: false, petStart: 0, curious: false, forgive: 0, lastPurr: 0,
+            dirX: 0, flips: [], kind: zone, makeup: 0, lastCare: 0 };
 });
+function hug() {
+  hugAt = 0; touch = null; cancelQuirk();
+  setOverride('love', 3200); sparkleUntil = performance.now() + 3200; showIcon('🤗', 3000);
+  sfx.purr(); play([[400, () => sfx.chirp()]]);
+  say(pick(['Hug!! 🤗', 'Aww, a hug 🤗💙', 'Squeeze! 🤗']), 2500, false);
+  tellPC('hug');
+}
 addEventListener('pointermove', e => {
+  if (ball && ball.held) {   // dragging the ball: remember how fast, for the throw
+    const h = ball.held, t = performance.now(), dt = Math.max(1, t - h.t) / 1000;
+    h.vx = h.vx * .5 + (e.clientX - h.x) / dt * .5; h.vy = h.vy * .5 + (e.clientY - h.y) / dt * .5;
+    ball.x = h.x = e.clientX; ball.y = h.y = e.clientY; h.t = t;
+    return;
+  }
   if (!touch) return;
-  const now = performance.now(), d = Math.hypot(e.clientX - touch.lx, e.clientY - touch.ly);
+  const now = performance.now(), d = Math.hypot(e.clientX - touch.lx, e.clientY - touch.ly), mx = e.clientX - touch.lx, my = e.clientY - touch.ly;
   touch.lx = e.clientX; touch.ly = e.clientY; touch.dist += d;
   if (touch.dist < 25) return;
   touch.moved = true;
   if (tool) return;   // in a tool, a drag is a swipe, not a pet
   if (!touch.petting) { touch.petting = true; touch.petStart = now; touch.lastPurr = now; sfx.hmm(); }   // "mm-hm"
+  // Quick back-and-forth rubbing is a tickle.
+  const dx = Math.abs(mx) > 3 ? Math.sign(mx) : 0;
+  if (dx && dx !== touch.dirX) { touch.dirX = dx; touch.flips = touch.flips.filter(t => now - t < 1200).concat(now); }
+  if (touch.flips.length >= 6 && touch.kind !== 'tickle' && !UPSET.includes(baseMood)) {
+    touch.kind = 'tickle'; cancelQuirk(); setOverride('giggle', 2600); sfx.laugh();
+    play([250, 550, 850, 1150, 1450].map(ms => [ms, () => bounceV = -4.5]));
+    if (rateOk('tickle', 6000)) say(pick(['Hahaha stop!! 🤣', 'Hehehe that tickles! 😆', 'No no no hahaha 🤣']), 2200, false);
+  }
+  if (touch.kind === 'tickle') { if (!overridden('giggle', now)) setOverride('giggle', 600); return careWhilePetting(now); }
   if (overridden('grumpy', now)) {   // petting makes up for the poking
     touch.forgive += d;
     if (touch.forgive > S * 2) { pokes = []; setOverride('love', 1800); sfx.chirp(); touch.forgive = -1e9; }
     return;
   }
+  if (UPSET.includes(baseMood)) {   // upset: it takes a little petting before it melts
+    touch.makeup += d;
+    const need = { angry: S * 6, annoyed: S * 3.5, sad: S * 2 }[baseMood] || S;
+    if (touch.makeup < need) { setOverride(baseMood === 'sad' ? 'aww' : baseMood === 'clingy' || baseMood === 'lonely' ? 'clingy' : baseMood, 700); careWhilePetting(now); return; }
+  }
   if (!overridden('love', now)) {
     const dozing = friendship() >= 3 && now - touch.petStart > 4000;   // close friends doze off under your hand
-    setOverride(dozing ? 'dozy' : trait().sweet ? 'love' : 'content', 700);
+    if (touch.zone === 'pat') { setOverride('content', 700); if (d > 8 && my > 0) bounceV = Math.max(bounceV, 1.5); }   // bobs under your hand
+    else if (touch.zone === 'chin') { setOverride(dozing ? 'dozy' : 'content', 700); hold(0, -.45, 700); }   // melts, chin up
+    else setOverride(dozing ? 'dozy' : trait().sweet ? 'love' : 'content', 700);
   }
   if (now - touch.lastPurr > 450) { touch.lastPurr = now; sfx.purr(); }
+  careWhilePetting(now);
 });
+function careWhilePetting(now) {   // the PC hears about long petting every few seconds, so its heart fills as you go
+  if (now - touch.petStart > 1500 && now - touch.lastCare > 3500) { touch.lastCare = now; tellPC(touch.kind); }
+}
 function release() {
   if (!touch) return;
   if (tool) {
@@ -2150,13 +2536,29 @@ function release() {
     touch = null;
     return;
   }
+  const quick = performance.now() - touch.t < 380, up = touch.y - touch.ly;
+  if (quick && up > S * .9 && up > Math.abs(touch.lx - touch.x) && !UPSET.includes(baseMood)) {   // a quick flick up: high five!
+    cancelQuirk(); setOverride('giggle', 1400); showIcon('✋', 1800); bounceV = -7; sfx.chirp();
+    say(pick(['High five! ✋', 'Yeah! ✋😄', 'Up top! ✋']), 1800, false); tellPC('highfive');
+    touch = null; return;
+  }
   if (touch.curious) { setOverride('happy', 1000); sfx.chirp(); }
-  else if (!touch.petting && performance.now() - touch.t < 400) poke(touch.x, touch.y);
-  if (touch.petting && touch.dist > S) tellPC('pet');
+  else if (!touch.petting && quick) poke(touch.x, touch.y);
+  if (touch.petting && touch.dist > S && !touch.lastCare) tellPC(touch.kind);
   touch = null;
 }
-addEventListener('pointerup', release);
-addEventListener('pointercancel', release);
+const fingerUp = e => {
+  fingers.delete(e.pointerId);
+  if (ball && ball.held) {   // throw!
+    const h = ball.held, cap = W * 3;
+    ball.vx = clamp(h.vx, -cap, cap); ball.vy = clamp(h.vy, -cap, cap); ball.held = null; ball.lastTouch = performance.now();
+    return;
+  }
+  if (hugAt) { if (performance.now() >= hugAt) hug(); hugAt = 0; touch = null; return; }
+  release();
+};
+addEventListener('pointerup', fingerUp);
+addEventListener('pointercancel', fingerUp);
 addEventListener('dblclick', () => { if (tool) return; hudOn = !hudOn; $('hud').style.display = hudOn ? '' : 'none'; });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) keepAwake(); });
 
@@ -2203,7 +2605,7 @@ function openSheet(kind) {
     title = `⏱ Working for ${hm(state.work * 60000)}`;
     body = row('Next break reminder', P('breaks') ? (left > 0 ? `in ${hm(left * 60000)}` : 'now') : 'off (turn on in the dashboard)')
       + `<p class="muted">Stepping away from the PC for 5 minutes also counts as a break.</p>`;
-    add('I just took a break', () => { fetch('work-reset', { method: 'POST' }).catch(() => {}); breakAck = 0; reminding = false; bubble.classList.remove('show'); tellPC('break'); setOverride('love', 1500); say('Nice! Timer reset 💙', 1800, 'happy'); }, true);
+    add('I just took a break', () => { fetch(PC('work-reset'), { method: 'POST' }).catch(() => {}); breakAck = 0; reminding = false; bubble.classList.remove('show'); tellPC('break'); setOverride('love', 1500); say('Nice! Timer reset 💙', 1800, 'happy'); }, true);
     add('Remind me in 15 min', () => { breakAck = state.work - P('breakMinutes') + 15; reminding = false; bubble.classList.remove('show'); say('Okay, 15 more minutes ⏱', 1800, 'calm'); });
     add('Start a focus session', () => startTool('pomo'));
   } else if (kind === 'mail') {
@@ -2240,16 +2642,20 @@ function openSheet(kind) {
       + (k.source ? `<label class="scope"><input type="checkbox" id="mScope"> Remember for everything from ${esc(k.source)}</label>` : '');
     const teach = kind2 => () => {
       const scope = $('mScope') && $('mScope').checked ? 'source' : 'title';
-      fetch('media-correct', { method: 'POST', body: JSON.stringify({ kind: kind2, scope }) }).then(r => r.json())
+      fetch(PC('media-correct'), { method: 'POST', body: JSON.stringify({ kind: kind2, scope }) }).then(r => r.json())
         .then(r => { say(r.message, 2200, 'happy'); setOverride('happy', 1200); }).catch(() => {});
     };
     add("It's music 🎵", teach('music'), true); add("It's a movie 🍿", teach('movie')); add('Neither', teach('ignore'));
   } else if (kind === 'buddy') {
     title = `💙 ${esc(b.name)}`;
     body = row('Personality', PERSONALITY_NAMES[b.personality] || '') + row('Gender', { boy: 'Boy 👦', girl: 'Girl 👧' }[b.gender] || 'Just a robot 🤖')
-      + row('Friendship', `${'▰'.repeat(b.level)}${'▱'.repeat(5 - b.level)} level ${b.level}`) + row('Together', b.days ? `${b.days} day${b.days > 1 ? 's' : ''}` : 'since today')
-      + '<p class="muted">Change its name, gender and personality in the Desk Buddy app on your PC.</p>';
-    add('Say hi 👋', () => { QUIRKS.wave(); speak(3, 'happy'); }, true);
+      + row('Friendship', `${'▰'.repeat(b.level)}${'▱'.repeat(5 - b.level)} level ${b.level}`) + row('Together', b.days ? `${b.days} day${b.days > 1 ? 's' : ''}` : 'since today');
+    const h = P('needs') && state.heart, bar = v => `${'▰'.repeat(Math.round(v * 5))}${'▱'.repeat(5 - Math.round(v * 5))}`;
+    if (h) body += row('Feeling', h.label) + row('💗 Love', bar(h.love)) + row('🎈 Fun', bar(h.fun)) + row('🔋 Energy', bar(h.energy))
+      + '<p class="muted">Pet it for love, play and snacks for fun, and it recharges while you’re away. Pat its head, scratch its chin, tickle, boop its nose, hug with two fingers, flick up for a high five.</p>';
+    else body += '<p class="muted">Change its name, gender and personality in the Desk Buddy app on your PC.</p>';
+    add('Play ball 🎾', () => startBall(), true);
+    add('Snack 🍪', () => giveTreat('cookie')); add('Ice cream 🍦', () => giveTreat('icecream')); add('Battery 🔋', () => giveTreat('battery'));
   } else if (kind === 'running') {
     title = '⏳ Running now';
     if (t.end || t.pausedLeft) {
@@ -2306,7 +2712,7 @@ setInterval(() => {
   $('mailc').textContent = state.mail ? `✉ ${state.mail.unread}` : '';
   const next = state.calendar && state.calendar.events.find(e => e.start * 1000 > Date.now());
   $('next').textContent = next ? `📅 ${new Date(next.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
-  $('bond').textContent = state.buddy ? `💙 Lv${state.buddy.level}` : '';
+  $('bond').textContent = state.buddy ? `${FEEL_ICON[(P('needs') && state.heart && state.heart.feeling) || 'okay']} Lv${state.buddy.level}` : '';
   const t = kit.timer, p = kit.pomo, running = [];   // tools still ticking in the background
   if (t.end || t.pausedLeft) running.push(`⏳ ${mmss(timerLeft())}`);
   if (kit.watch.start) running.push(`⏱ ${mmss(watchTime())}`);

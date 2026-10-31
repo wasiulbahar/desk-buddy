@@ -33,6 +33,13 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | Autumn / spring | Falling leaves / drifting blossom 🍂 |
 | Your birthday, New Year, Halloween, Eid, Diwali, Christmas, Lunar New Year | Party, witch or Santa hats, decorations and a greeting 🎉 |
 | Payday / the days before it | Sunglasses and 💸 confetti / gentle "hang in there" support |
+| You ignore it for hours | Shows how it feels, its own way: lonely, teary, clingy, annoyed or even angry. Some petting makes up 🥺 |
+| You come back after a while | Catches up: what you did while its screen was off 👀 |
+| You pat, scratch, tickle, boop, hug or high-five it | A different reaction for each, plus snacks 🍪 and a ball to play with 🎾 |
+| The music builds up and drops | Dance moves that fit the song, party lights, a spin on the drop 🪩 |
+| No phone is connected | A mini buddy keeps you company in the corner of your PC screen 🪟 |
+| No Wi-Fi | Connects over the phone's USB or Bluetooth tethering, switching by itself 🔌 |
+| You use more than one PC | One buddy on all of them (same network and/or Google Drive, OneDrive, Dropbox), encrypted 🔄 |
 | Several people share the PC | Each person gets their own password-protected profile: own buddy, Gmail, Calendar, settings and history 👥 |
 | You spend time together | Friendship grows from level 1 (shy) to 5 (best friends) 💞 |
 | Nothing much happening | Sneezes, hiccups, hums, nods off and chases flies 🤧 |

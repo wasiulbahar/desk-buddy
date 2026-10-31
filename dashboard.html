@@ -55,6 +55,14 @@
   .golink { font-size: 13px; color: var(--cyan); text-decoration: none; border: 1px solid rgba(90,240,255,.35); border-radius: 9px; padding: 5px 10px; white-space: nowrap; }
   .frow.off h3 { color: var(--muted); }
   .frow .sub-setting { grid-column: 2 / 4; display: flex; align-items: center; gap: 12px; font-size: 13.5px; color: var(--muted); }
+  .needs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 10px; }
+  .needs span { font-size: 13px; color: var(--muted); }
+  .needs .bar i { background: linear-gradient(90deg, #ff6eaf, #ffd166); }
+  @media (max-width: 640px) { .needs { grid-template-columns: 1fr; } }
+  .bigcode { font: 600 30px/1.2 ui-monospace, Consolas, monospace; letter-spacing: 3px; color: var(--cyan); margin: 10px 0; }
+  .links { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 14px; }
+  .links .link { background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 12px; width: 190px; text-align: center; font-size: 13px; }
+  .links .link .q { background: #fff; border-radius: 10px; padding: 8px; margin-bottom: 8px; }
   .who { display: flex; align-items: center; gap: 8px; margin: 0 8px 14px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line);
          background: var(--bg); color: var(--text); font: inherit; font-size: 14px; text-align: left; }
   .who small { margin-left: auto; color: var(--cyan); font-size: 12px; }
@@ -199,6 +207,7 @@
     <a href="#insights">📈 Insights</a>
     <a href="#life">🌦️ Life</a>
     <a href="#people">👥 People</a>
+    <a href="#sync">🔄 Sync</a>
     <a href="#sound">🔊 Sound</a>
     <a href="#phone">📱 Phone</a>
     <a href="#cheeky">😈 Cheeky mode</a>
@@ -229,6 +238,22 @@
         </div>
       </div>
       <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="npScope"> <span id="npScopeText">Remember for everything from this channel</span></label>
+    </div>
+    <div class="card" id="feelCard" style="display:none">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div><h2>How it feels: <span id="feelLabel">—</span></h2>
+          <p class="muted">Its needs change all day, even when the phone is off. Pet it for love; snacks and play for fun; it recharges while you're away.</p></div>
+        <div class="row">
+          <button class="btn ghost" data-care="cookie">🍪 Cookie</button>
+          <button class="btn ghost" data-care="icecream">🍦 Ice cream</button>
+          <button class="btn ghost" data-care="battery">🔋 Battery</button>
+        </div>
+      </div>
+      <div class="needs">
+        <div><span>💗 Love</span><div class="bar"><i id="nLove"></i></div></div>
+        <div><span>🎈 Fun</span><div class="bar"><i id="nFun"></i></div></div>
+        <div><span>🔋 Energy</span><div class="bar"><i id="nEnergy"></i></div></div>
+      </div>
     </div>
     <div class="grid2">
       <div class="card"><div class="preview"><iframe class="robot" title="Your buddy" allow="autoplay"></iframe></div>
@@ -412,6 +437,39 @@
     </div>
   </section>
 
+  <!-- SYNC -->
+  <section class="page" id="p-sync">
+    <h1>Sync 🔄</h1>
+    <p class="sub">Use Desk Buddy on more than one PC? Keep one buddy on all of them: friendship from every PC adds up, its feelings follow you, and the phone follows you to the PC you're using.</p>
+    <div id="syncOff">
+      <div class="grid2">
+        <div class="card"><h2>This is my first PC</h2><p class="muted">Get a sync code to type on your other PCs.</p>
+          <button class="btn" id="syncStart" style="margin-top:12px">Start syncing</button></div>
+        <div class="card"><h2>I have a code</h2><p class="muted">From Desk Buddy → Sync on your other PC. This PC takes on that buddy.</p>
+          <div class="row" style="margin-top:12px"><input type="text" id="joinCode" placeholder="e.g. MOCHI-7K2P-91QX" style="max-width:220px;text-transform:uppercase"><button class="btn" id="syncJoin">Join</button></div></div>
+      </div>
+    </div>
+    <div id="syncOn" style="display:none">
+      <div class="card">
+        <h2>Your sync code</h2>
+        <p class="bigcode" id="syncCode">—</p>
+        <p class="muted">Type it on each of your other PCs (Desk Buddy → Sync → I have a code). It also encrypts everything that's shared, so keep it to yourself.</p>
+        <div id="syncPeers" class="status">Looking for your other PCs…</div>
+      </div>
+      <div class="card">
+        <h2>How your PCs share</h2>
+        <div class="toggle"><div><h3>📶 Same network</h3><p>PCs on the same Wi-Fi or office network find each other and swap directly.</p></div>
+          <label class="switch"><input type="checkbox" id="syncLan"><span></span></label></div>
+        <div class="toggle"><div><h3>☁️ Synced folder</h3><p>For PCs in different places: Google Drive, OneDrive or Dropbox carries an encrypted file between them. Pick the same kind of folder on every PC.</p></div></div>
+        <div class="row" style="margin-top:8px"><select id="syncFolder" class="sel" style="max-width:420px"></select>
+          <input type="text" id="syncPath" placeholder="Paste a folder path" style="max-width:320px;display:none"><button class="btn" id="saveFolder">Save</button></div>
+        <p class="muted" id="syncFolderNote"></p>
+      </div>
+      <div class="card"><p class="muted">Gmail and Calendar logins stay on each PC.</p>
+        <button class="btn danger" id="syncStop">Stop syncing on this PC</button></div>
+    </div>
+  </section>
+
   <!-- SOUND -->
   <section class="page" id="p-sound">
     <h1>Sound</h1>
@@ -453,6 +511,18 @@
           <li>If it ever can't find your PC (for example after a router restart), scan this code again.</li>
         </ol>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>🔌 No Wi-Fi? Use a cable or Bluetooth</h2>
+      <p class="muted">Desk Buddy also works over your phone's own cable or Bluetooth link. Turn it on once, and the phone switches between Wi-Fi, cable and Bluetooth by itself. A cable keeps the phone charged too.</p>
+      <ol class="steps">
+        <li><b>Cable (Android):</b> plug the phone into the PC, then turn on <b>Settings → Network → Hotspot &amp; tethering → USB tethering</b>.</li>
+        <li><b>Cable (iPhone):</b> plug it in and turn on <b>Settings → Personal Hotspot</b>.</li>
+        <li><b>Bluetooth (Android):</b> pair the phone with the PC, turn on <b>Bluetooth tethering</b> on the phone, then on the PC choose the phone in <b>Bluetooth → Join a Personal Area Network</b>.</li>
+        <li>Already set up over Wi-Fi? Nothing else to do. Starting fresh? Scan the code for that link below.</li>
+      </ol>
+      <div id="linkList" class="links"></div>
     </div>
 
     <div class="card">
@@ -621,6 +691,8 @@ const FEATURES = [
   ]],
   ['🖥️ Your PC and your tasks', [
     ['🎵', 'Dances to music', 'Spotify, YouTube Music or any player: it dances in time with the beat, shows the song, and is sad when you pause. The music keeps going alongside everything else, like reading or tools.', { pref: 'music', try: { mood: 'song' } }],
+    ['🪩', 'Dance moves and party lights', 'Moves that fit the song (a dreamy sway, bounces, twists, hops, headbanging), a squash on every big hit, shaking through the build-up, a spin on the drop, plus light beams and an equalizer.', { pref: 'danceFx', try: { mood: 'song' } }],
+    ['🪟', 'Mini buddy on your desktop', 'No phone connected? A little pair of eyes sits in the corner of your screen. Stroke it with the mouse to pet it, drag to move it, right-click for snacks. Hides during fullscreen.', { pref: 'desktopBuddy' }],
     ['🍿', 'Movie night', 'Netflix, Prime Video, Disney+, trailers and YouTube videos: it settles in with popcorn and munches along.', { pref: 'movie', try: { mood: 'movie' } }],
     ['👓', 'Reading glasses', 'Puts on glasses and reads along with documents: PDFs, Word and DOCX files, Google Docs, e-books, Wikipedia and articles. Not for browsing Google Drive.', { pref: 'reading', try: { mood: 'reading' } }],
     ['🎶', 'Reading with music', 'Reading while music plays? Glasses on, notes floating, still bobbing to the beat.', { try: { mood: 'readmusic' } }],
@@ -642,8 +714,17 @@ const FEATURES = [
     ['📈', 'Work patterns', 'Learns your usual hours and focus times, cheers long focus stretches, notices when you\'re jumping around, and sums up your day.', { pref: 'patterns', link: ['#insights', 'Insights'] }],
     ['🎓', 'Music or movie: teach it', "Got it wrong? Correct it (here on Home, or tap 🎵/🍿 on the phone) and it learns that title, channel and the words that give it away.", { link: ['#insights', 'What it learned'] }],
   ]],
+  ['💓 Feelings', [
+    ['🥺', 'It has feelings', 'Love, fun and energy rise and fall all day (on the PC, even with the phone off). Ignore it and it shows, its own way: shy gets teary, grumpy gets annoyed then angry, cheerful gets clingy. Some petting makes up.', { pref: 'needs', try: { heart: { feeling: 'sad', strength: .9 } } }],
+    ['😤', 'Making up', "Upset? Pokes don't help. Pet it for a while and it forgives you, happily.", { try: { heart: { feeling: 'angry', strength: 1 } } }],
+    ['👀', 'Catches up with you', 'Open the phone after a while and it tells you what you did while its screen was off (and how it feels about it).', { pref: 'catchup' }],
+    ['😉', 'Never the same face', 'Winks, glances, lazy looks, slow blinks and thinking looks, mixed for its personality and mood.', {}],
+  ]],
   ['🤚 Touch and play', [
     ['🫶', 'Pet it', 'Slide a finger across it: sparkly eyes, a contented hum, and it leans into your finger.', { try: { mood: 'content' } }],
+    ['🤗', 'More ways to pet', 'Pat its head (above the eyes), scratch its chin (below), rub fast to tickle, boop between the eyes (cross-eyed!), hug with two fingers, flick up for a high five.', {}],
+    ['🍪', 'Snacks', "Hold the screen, then Snacks: a cookie, ice cream or a battery for energy. Three of each a day, then it's full.", { try: { snack: 'cookie' } }],
+    ['🎾', 'Play ball', "Hold the screen, then Ball. Fling it around; it watches and headbutts it back. Great when it's bored.", { try: { play: 'ball' } }],
     ['👉', 'Poke it', 'It giggles, but poke too much and it sulks until you pet it to make up.', { try: { mood: 'grumpy' } }],
     ['🤔', 'Curious about your finger', 'Hold a finger still and it studies it.', { try: { mood: 'curious' } }],
     ['😆', 'Secret tickle spot', 'Somewhere low on the screen, in a new place every time.', {}],
@@ -653,6 +734,8 @@ const FEATURES = [
     ['🌀', 'Shake, tilt, lay it down', 'Shake it and it gets dizzy, tilt it and its eyes roll like marbles, lay it flat and it relaxes. Needs the secure link.', { pref: 'sensors', try: { mood: 'relaxed' }, link: ['#phone', 'Set up'] }],
     ['👏', 'Clap twice', 'Two claps wake it up. The mic only measures loudness on the phone; nothing is recorded or sent.', { pref: 'mic', try: { mood: 'surprised' } }],
     ['🔋', 'Phone battery', "Shows the phone's battery in the status bar (Android), and asks to be plugged in when it's low.", {}],
+    ['🔌', 'Wi-Fi, cable or Bluetooth', "Connect over Wi-Fi, a USB cable or Bluetooth (the phone's tethering). It switches by itself when one stops working.", { link: ['#phone', 'How'] }],
+    ['🔄', 'Several PCs, one buddy', "Sync over the same network and/or Google Drive, OneDrive or Dropbox. The phone follows you to the PC you're using.", { link: ['#sync', 'Set up'] }],
     ['📊', 'Tap any number', 'Tap the time, work timer, mail, events, battery or running timers on the phone for details and actions: reset the work timer, snooze, pause or reset timers…', {}],
   ]],
   ['☀️ Your day', [
@@ -875,6 +958,57 @@ $('#saveBday').addEventListener('click', async () => {
   await api('life', { birthday: m && d ? `${m}-${d}` : '' }); setTimeout(load, 800);
 });
 
+// ---------- how it feels, other ways to connect, and sync ----------
+function renderFeel() {
+  const h = S.heart;
+  $('#feelCard').style.display = h ? '' : 'none';
+  if (!h) return;
+  $('#feelLabel').textContent = h.label;
+  for (const [id, v] of [['#nLove', h.love], ['#nFun', h.fun], ['#nEnergy', h.energy]]) $(id).style.width = Math.round(v * 100) + '%';
+}
+const LINK_KIND = { wifi: ['📶', 'Wi-Fi'], lan: ['🖧', 'Network'], cable: ['🔌', 'Cable'], bluetooth: ['🔵', 'Bluetooth'] };
+let linksShown = '';
+function renderLinks() {
+  const key = JSON.stringify(S.links || []);
+  if (key === linksShown) return;
+  linksShown = key;
+  $('#linkList').innerHTML = (S.links || []).map(l => `<div class="link"><div class="q">${(S.linkQr || {})[l.ip] || ''}</div>
+    <b>${LINK_KIND[l.kind][0]} ${LINK_KIND[l.kind][1]}</b><br><code>http://${esc(l.ip)}:${location.port || 8765}</code></div>`).join('')
+    || '<p class="muted">Turn on USB or Bluetooth tethering on the phone and its link shows up here within half a minute.</p>';
+  if ((S.links || []).some(l => !(S.linkQr || {})[l.ip])) { linksShown = ''; setTimeout(load, 1000); }   // a new link: fetch its QR code
+}
+let foldersShown = '';
+function renderSync() {
+  const y = S.sync || {};
+  $('#syncOff').style.display = y.on ? 'none' : ''; $('#syncOn').style.display = y.on ? '' : 'none';
+  if (!y.on) return;
+  $('#syncCode').textContent = S.syncCode || '…';
+  $('#syncLan').checked = y.lan;
+  const ago = s => s == null ? 'not yet' : s < 90 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
+  $('#syncPeers').innerHTML = y.error ? esc(y.error) : y.peers.length
+    ? y.peers.map(p => `✓ <b>${esc(p.name)}</b> (${p.via}, synced ${ago(p.ago)})`).join('<br>')
+    : `Looking for your other PCs… (this one is <b>${esc(y.pcName)}</b>)`;
+  $('#syncPeers').className = 'status' + (y.peers.length ? ' ok' : '');
+  const key = JSON.stringify([S.folders, y.folder]);
+  if (key !== foldersShown && document.activeElement !== $('#syncFolder')) {
+    foldersShown = key;
+    const opts = [['', "Don't use a synced folder"]].concat((S.folders || []).map(f => [f.path, `${f.name} (${f.path})`]));
+    if (y.folder && !opts.some(o => o[0] === y.folder)) opts.push([y.folder, y.folder]);
+    opts.push(['custom', 'Another folder…']);
+    $('#syncFolder').innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}" ${v === y.folder ? 'selected' : ''}>${esc(t)}</option>`).join('');
+    $('#syncFolderNote').textContent = (S.folders || []).length ? '' : 'No Google Drive, OneDrive or Dropbox folder found on this PC. Install Google Drive for desktop to sync PCs in different places.';
+  }
+}
+$('#syncStart').addEventListener('click', async () => { await api('sync', { action: 'start' }); load(); });
+$('#syncJoin').addEventListener('click', async () => { const r = await api('sync', { action: 'join', code: $('#joinCode').value }); if (r.ok) { $('#joinCode').value = ''; load(); } });
+$('#syncStop').addEventListener('click', async () => { if (confirm('Stop syncing on this PC? Your buddy stays as it is now.')) { await api('sync', { action: 'stop' }); load(); } });
+$('#syncLan').addEventListener('change', e => api('sync', { action: 'lan', on: e.target.checked }));
+$('#syncFolder').addEventListener('change', e => { $('#syncPath').style.display = e.target.value === 'custom' ? '' : 'none'; });
+$('#saveFolder').addEventListener('click', async () => {
+  const v = $('#syncFolder').value, path = v === 'custom' ? $('#syncPath').value : v;
+  await api('sync', { action: 'folder', path }); foldersShown = ''; load();
+});
+
 // ---------- the full features list ----------
 function renderFeatures() {
   const p = S.prefs, q = ($('#fSearch').value || '').toLowerCase();
@@ -944,7 +1078,7 @@ function renderAll() {
 }
 function renderLive() {
   const on = S.phones > 0;
-  renderTools(); renderNowPlaying(); renderPeople(); renderLife();
+  renderTools(); renderNowPlaying(); renderPeople(); renderLife(); renderFeel(); renderSync(); renderLinks();
   if (location.hash === '#insights' && Date.now() - insightsAt > 15000) loadInsights();
   $('#hello').textContent = `Hi! ${S.buddy.name} is ${on ? 'on your phone 👋' : 'waiting for your phone'}`;
   $('#sideDot').className = 'dot' + (on ? ' on' : '');
@@ -1013,6 +1147,7 @@ document.addEventListener('click', async e => {
     const msg = JSON.parse(tr.dataset.try), robot = $('#featRobot').contentWindow;
     if (!msg.tool) robot.postMessage({ tool: '' }, '*');
     robot.postMessage(msg, '*');
+    if (msg.heart) { clearTimeout(window.heartDemo); window.heartDemo = setTimeout(() => robot.postMessage({ heart: null }, '*'), 9000); }
   }
   if (test) api('test-sound', { where: test.dataset.test });
   const act = e.target.closest('[data-act]'), min = e.target.closest('[data-min]'), teachB = e.target.closest('[data-teach]'), forget = e.target.closest('[data-forget]');
@@ -1020,6 +1155,8 @@ document.addEventListener('click', async e => {
   if (act && !act.disabled) await api('tool', { action: act.dataset.act, minutes: timerMinutes, show: $('#toolShow').checked });
   if (teachB) { await api('media', { kind: teachB.dataset.teach, scope: $('#npScope').checked ? 'source' : 'title' }); $('#npScope').checked = false; }
   if (forget) { await api('media', { forget: forget.dataset.forget, key: decodeURIComponent(forget.dataset.key) }); loadInsights(); }
+  const care = e.target.closest('[data-care]');
+  if (care) { await api('buddy', { care: care.dataset.care }); load(); }
   const ch = e.target.closest('[data-cheeky]');
   if (ch) { S.prefs.cheeky = +ch.dataset.cheeky; renderAll(); await api('prefs', { cheeky: S.prefs.cheeky }); }
   const v = e.target.closest('[data-voice]');

@@ -125,6 +125,26 @@ class MediaLearner:
             {"title": self.titles, "source": self.sources}.get(kind_of_rule, {}).pop(key, None)
             self._save()
 
+    def data(self):
+        with self.lock:
+            return {"titles": dict(self.titles), "sources": dict(self.sources), "words": {w: dict(c) for w, c in self.words.items()}}
+
+    def merge(self, other):
+        """What another PC learned (sync). Corrections made here win; word counts keep the larger tally."""
+        if not isinstance(other, dict):
+            return
+        with self.lock:
+            for mine, theirs in ((self.titles, other.get("titles")), (self.sources, other.get("sources"))):
+                for k, v in (theirs or {}).items():
+                    if v in KINDS:
+                        mine.setdefault(k, v)
+            for w, counts in (other.get("words") or {}).items():
+                mine = self.words.setdefault(w, {})
+                for kind, n in counts.items():
+                    if kind in KINDS and isinstance(n, int):
+                        mine[kind] = max(mine.get(kind, 0), n)
+            self._save()
+
     def rules(self):
         with self.lock:
             return {"titles": sorted(self.titles.items()), "sources": sorted(self.sources.items()),
@@ -188,6 +208,7 @@ class ActivityTracker:
         self.switches = deque()      # recent changes between kinds of activity
         self.streak, self.off_task = 0, 0
         self.last_save = 0.0
+        self.others = {}   # other PCs' days (sync), added into the summaries
 
     def _day(self, d):
         return self.days.setdefault(d, {"acts": {}, "hours": [{} for _ in range(24)], "first": None, "last": None, "longest": 0})
@@ -239,6 +260,35 @@ class ActivityTracker:
             json.dump({"days": self.days}, f)
         os.replace(tmp, self.path)
 
+    def all_days(self):
+        """This PC's days plus your other PCs' (when synced): time adds up, first/last/longest combine."""
+        if not self.others:
+            return self.days
+        out = dict(self.days)
+        for days in self.others.values():
+            for d, v in days.items():
+                mine = out.get(d)
+                if not mine:
+                    out[d] = v
+                    continue
+                acts = dict(mine["acts"])
+                for k, sec in v.get("acts", {}).items():
+                    acts[k] = acts.get(k, 0) + sec
+                hours = [dict(h) for h in mine["hours"]]
+                for i, counts in enumerate(v.get("hours", [])[:24]):
+                    for k, sec in counts.items():
+                        hours[i][k] = hours[i].get(k, 0) + sec
+                firsts = [x for x in (mine["first"], v.get("first")) if x is not None]
+                lasts = [x for x in (mine["last"], v.get("last")) if x is not None]
+                out[d] = {"acts": acts, "hours": hours, "first": min(firsts) if firsts else None,
+                          "last": max(lasts) if lasts else None, "longest": max(mine["longest"], v.get("longest", 0))}
+        return out
+
+    def recent(self, days=14):
+        cutoff = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+        with self.lock:
+            return {d: v for d, v in self.days.items() if d >= cutoff}
+
     def now(self, now):
         key = self.session_key or "other"
         label, emoji = INFO.get(key, INFO["other"])
@@ -249,9 +299,10 @@ class ActivityTracker:
         """Today's numbers plus your usual pattern, for the phone and the dashboard."""
         today = today or datetime.date.today().isoformat()
         with self.lock:
-            day = self.days.get(today, {"acts": {}, "hours": [{} for _ in range(24)], "first": None, "last": None, "longest": 0})
-            past = [v for d, v in sorted(self.days.items()) if d < today][-14:]
-            week = [v for d, v in sorted(self.days.items()) if d > (datetime.date.fromisoformat(today) - datetime.timedelta(days=7)).isoformat()]
+            days = self.all_days()
+            day = days.get(today, {"acts": {}, "hours": [{} for _ in range(24)], "first": None, "last": None, "longest": 0})
+            past = [v for d, v in sorted(days.items()) if d < today][-14:]
+            week = [v for d, v in sorted(days.items()) if d > (datetime.date.fromisoformat(today) - datetime.timedelta(days=7)).isoformat()]
             acts = sorted(day["acts"].items(), key=lambda kv: -kv[1])
             starts = [v["first"] for v in past if v.get("first") is not None]
             ends = [v["last"] for v in past if v.get("last") is not None]
@@ -371,3 +422,111 @@ def life_context(today, prefs, config, location, weather):
         "occasions": occasions(today, prefs, config.get("birthday")) if prefs.get("occasions") else [],
         "money": money(today, int(config.get("payday") or 0)) if prefs.get("money") else None,
     }
+
+
+# ---------- its heart: needs that rise and fall all day, even when the phone is off ----------
+# love: petting and attention. fun: play, music, treats. energy: rest (it recharges while you're away).
+# Each need runs from 0 to 1. When one gets low it shows, in its own personality's way.
+
+NEED_DRAIN = {   # per hour you're at the PC without giving it attention
+    "cheerful": {"love": .08, "fun": .08}, "shy": {"love": .07, "fun": .06}, "hyper": {"love": .1, "fun": .12},
+    "sleepy": {"love": .06, "fun": .05}, "grumpy": {"love": .07, "fun": .07},
+}
+CARE = {   # what each kind of attention gives
+    "pet": {"love": .08}, "pat": {"love": .06}, "chin": {"love": .09, "fun": .02}, "hug": {"love": .15},
+    "boop": {"love": .02, "fun": .04}, "tickle": {"love": .04, "fun": .1}, "highfive": {"love": .04, "fun": .05},
+    "cookie": {"love": .04, "fun": .08, "energy": .05}, "icecream": {"love": .04, "fun": .12},
+    "battery": {"energy": .35}, "ball": {"love": .03, "fun": .25, "energy": -.05}, "hello": {"love": .05},
+}
+LOW = {   # how each personality feels when love runs low, then very low
+    "cheerful": ("clingy", "sad"), "shy": ("lonely", "sad"), "hyper": ("clingy", "annoyed"),
+    "sleepy": ("lonely", "sad"), "grumpy": ("annoyed", "angry"),
+}
+
+
+class Heart:
+    def __init__(self, saved, personality):
+        saved = saved if isinstance(saved, dict) else {}
+        self.love, self.fun, self.energy = (min(1.0, max(0.0, float(saved.get(k, d)))) for k, d in
+                                            (("love", .8), ("fun", .7), ("energy", .8)))
+        self.personality = personality if personality in NEED_DRAIN else "cheerful"
+        self.last_care = float(saved.get("lastCare", 0))
+        self.treats = saved.get("treats", {}) if isinstance(saved.get("treats"), dict) else {}
+
+    def save(self):
+        return {"love": round(self.love, 4), "fun": round(self.fun, 4), "energy": round(self.energy, 4),
+                "lastCare": self.last_care, "treats": self.treats}
+
+    def adopt(self, saved):
+        """Take over the feelings from another PC (sync: they follow you to the PC you used last)."""
+        other = Heart(saved, self.personality)
+        self.love, self.fun, self.energy, self.last_care, self.treats = other.love, other.fun, other.energy, other.last_care, other.treats
+
+    def _add(self, need, amount):
+        setattr(self, need, min(1.0, max(0.0, getattr(self, need) + amount)))
+
+    def tick(self, hours, here, activity, hour):
+        """hours: time since the last tick. here: you're at the PC. activity: what you're doing."""
+        if here:
+            drain = NEED_DRAIN[self.personality]
+            self._add("love", -drain["love"] * hours)
+            if activity in ("music", "gaming", "video"):
+                self._add("fun", .2 * hours)    # fun together, even hands-off
+            else:
+                self._add("fun", -drain["fun"] * hours)
+            late = hour >= 23 or hour < 5
+            self._add("energy", -(.25 if late else .05) * hours * (1.5 if self.personality == "sleepy" else 1))
+        else:
+            self._add("energy", .35 * hours)    # naps while you're away (and doesn't feel ignored)
+
+    def care(self, kind, now):
+        """Petting, treats, play... Returns False for a treat it's had too many of today."""
+        gift = CARE.get(kind)
+        if not gift:
+            return False
+        if kind in ("cookie", "icecream", "battery"):
+            today = datetime.date.fromtimestamp(now).isoformat()
+            if self.treats.get("date") != today:
+                self.treats = {"date": today}
+            if self.treats.get(kind, 0) >= 3:
+                return False   # full!
+            self.treats[kind] = self.treats.get(kind, 0) + 1
+        for need, amount in gift.items():
+            self._add(need, amount)
+        self.last_care = now
+        return True
+
+    def feeling(self):
+        """How it feels right now, and how strongly (0-1)."""
+        lonely, upset = LOW[self.personality]
+        if self.love < .15:
+            return upset, round(1 - self.love / .15 * .4, 2)
+        if self.love < .35:
+            return lonely, round(.3 + (.35 - self.love) / .2 * .4, 2)
+        if self.energy < .2:
+            return "tired", round(1 - self.energy / .2 * .5, 2)
+        if self.fun < .25:
+            return "bored", round(1 - self.fun / .25 * .5, 2)
+        if self.love > .8 and self.fun > .6 and self.energy > .5:
+            return "joyful", round((self.love - .8) * 5, 2)
+        return "okay", 0
+
+    def info(self):
+        key, strength = self.feeling()
+        return {"love": round(self.love, 3), "fun": round(self.fun, 3), "energy": round(self.energy, 3),
+                "feeling": key, "strength": strength, "label": FEELING_LABELS[key]}
+
+
+FEELING_LABELS = {
+    "joyful": "Over the moon 🥰", "okay": "Doing fine 🙂", "clingy": "Wants attention 🥺", "lonely": "A bit lonely 🥺",
+    "sad": "Sad, needs some love 😢", "annoyed": "Annoyed you're ignoring it 😒", "angry": "Angry! Needs a lot of petting 😤",
+    "tired": "Tired, low on energy 🔋", "bored": "Bored, wants to play 🥱",
+}
+
+
+def catch_up(before, after, minutes):
+    """What you did while the phone was off: the top two activities, from two snapshots of today's totals."""
+    acts = {k: (after.get(k, 0) - before.get(k, 0)) / 60 for k in after}
+    top = sorted(((k, round(m)) for k, m in acts.items() if m >= 5 and k != "other"), key=lambda x: -x[1])[:2]
+    return {"minutes": round(minutes), "top": [{"key": k, "label": INFO.get(k, INFO["other"])[0],
+                                                "emoji": INFO.get(k, INFO["other"])[1], "minutes": m} for k, m in top]}
