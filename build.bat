@@ -6,7 +6,7 @@ if not exist .venv (
     echo Setting up build tools...
     python -m venv .venv || goto :fail
 )
-.venv\Scripts\python -m pip install -q --disable-pip-version-check pyinstaller pillow pystray qrcode pycaw || goto :fail
+.venv\Scripts\python -m pip install -q --disable-pip-version-check pyinstaller pillow pystray qrcode pycaw winrt-runtime winrt-Windows.Media.Control winrt-Windows.Foundation icalendar recurring-ical-events tzdata || goto :fail
 
 .venv\Scripts\python -c "import deskbuddy; deskbuddy.robot_image(256, eye_scale=1.5).save('icon.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])" || goto :fail
 
@@ -14,6 +14,8 @@ if not exist .venv (
     --name DeskBuddy --icon "%~dp0icon.ico" ^
     --add-data "%~dp0face.html;." ^
     --hidden-import pystray._win32 ^
+    --collect-submodules winrt ^
+    --collect-all icalendar --collect-all recurring_ical_events --collect-data tzdata ^
     --distpath . --workpath build --specpath build ^
     deskbuddy.py || goto :fail
 

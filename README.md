@@ -15,7 +15,13 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | Away for 2 / 10 minutes | Gets sleepy, then falls asleep 😴 |
 | You come back | Wakes up happy to see you 👋 |
 | 50 minutes without a break | Reminds you to stretch and drink water 💧 |
-| You stroke the screen | Purrs, blushes and leans into your finger 🤚 |
+| Spotify, YouTube or any player is playing | Dances to the beat and shows the song name 🎵 |
+| A PDF, Google Docs, Wikipedia… is open | Puts on reading glasses and reads along 👓 |
+| You're in a Zoom / Teams / Meet call | Goes quiet and mutes itself 🤫 |
+| New Gmail arrives | Shows the sender and subject 📧 |
+| A Google Calendar event is coming up | Reminds you 10 minutes before and when it starts 📅 |
+| You spend time together | Friendship grows from level 1 (shy) to 5 (best friends) 💞 |
+| You stroke the screen | Purrs, eyes sparkle, leans into your finger 🤚 |
 | You tap the phone | Giggles and bounces 💕 (poke it too much and it sulks until you pet it) |
 | You hold a finger still | Gets curious about your finger 🤔 |
 | You find its secret tickle spot | Laughs uncontrollably 😆 |
@@ -26,6 +32,12 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | Nothing much happening | Sneezes, hiccups, hums, nods off and chases flies 🤧 |
 
 It talks with little chirps and beeps rather than words. Tap 🔊 at the bottom to mute it.
+
+Every buddy gets its own random name and personality (cheerful, shy, hyper, sleepy or grumpy-but-sweet). See **[every feature](https://wasiulbahar.github.io/desk-buddy/features.html)**.
+
+### Gmail and Google Calendar (optional)
+
+Right-click the tray robot → **Settings**. Gmail connects with a [Google App Password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification), and Calendar with your calendar's *Secret address in iCal format*. Both are encrypted with Windows DPAPI and stored only on your PC.
 
 ## Install
 
