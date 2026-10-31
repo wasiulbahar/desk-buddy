@@ -15,7 +15,17 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | Away for 2 / 10 minutes | Gets sleepy, then falls asleep 😴 |
 | You come back | Wakes up happy to see you 👋 |
 | 50 minutes without a break | Reminds you to stretch and drink water 💧 |
-| You tap the phone | Giggles and bounces 💕 |
+| You stroke the screen | Purrs, blushes and leans into your finger 🫳 |
+| You tap the phone | Giggles and bounces 💕 (poke it too much and it sulks until you pet it) |
+| You hold a finger still | Gets curious about your finger 🤔 |
+| You find its secret tickle spot | Laughs uncontrollably 😆 |
+| You spin the mouse in circles | Gets dizzy, with spiral eyes 😵 |
+| Music is playing | Dances to the beat 🎵 |
+| First time each day | Stretches and says good morning ☀️ (or that it missed you after a few days) |
+| After midnight | Gets drowsy and nudges you toward bed 🌙 |
+| Nothing much happening | Sneezes, hiccups, hums, nods off and chases flies 🤧 |
+
+It talks with little chirps and beeps rather than words. Tap 🔊 at the bottom to mute it.
 
 ## Install
 

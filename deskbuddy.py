@@ -3,7 +3,7 @@
 As DeskBuddy.exe (built with build.bat): double-click it once and it installs itself,
 starts with Windows, lives in the system tray, and shows a QR code for pairing a phone.
 
-During development:  python deskbuddy.py   (needs: pip install pillow pystray qrcode)
+During development:  python deskbuddy.py   (needs: pip install pillow pystray qrcode pycaw)
 
 Windows only (reads PC activity through the Win32 API via ctypes).
 """
@@ -112,7 +112,31 @@ def cursor_position():
     return (pt.x - vx) / max(vw, 1) * 2 - 1, (pt.y - vy) / max(vh, 1) * 2 - 1
 
 
-stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0}
+stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0}
+
+
+def audio_loop():
+    """How loud the PC's speakers are right now (0..1), so the robot can dance to music."""
+    try:
+        import comtypes
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
+        comtypes.CoInitialize()
+        dev = AudioUtilities.GetSpeakers()
+        dev = getattr(dev, "_dev", dev)  # newer pycaw wraps the raw device
+        meter = ctypes.cast(dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None),
+                            ctypes.POINTER(IAudioMeterInformation))
+    except Exception:
+        return  # no speakers or pycaw missing: the robot just won't dance
+    level = 0.0
+    while True:
+        try:
+            # Fast attack, slow release, so beats show up as clear spikes.
+            level = max(meter.GetPeakValue(), level * 0.8)
+        except Exception:
+            level = 0.0
+        stats["audio"] = round(level, 3)
+        time.sleep(1 / 60)
 
 
 def stats_loop():
@@ -358,6 +382,11 @@ def run_as_admin(exe, params):
 
 
 def allow_through_firewall(exe):
+    # Already allowed (e.g. installing an update): skip the admin prompt.
+    shown = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={FIREWALL_RULE}", "verbose"],
+                           capture_output=True, text=True, creationflags=NO_WINDOW).stdout
+    if os.path.normcase(exe) in os.path.normcase(shown):
+        return
     # Only home/work ("private") networks - the robot never listens on public Wi-Fi.
     run_as_admin("cmd.exe",
                  f"/c netsh advfirewall firewall delete rule name={FIREWALL_RULE} >nul & "
@@ -474,7 +503,8 @@ def run_app(show_pair):
         "/icon-512.png": ("image/png", png_bytes(robot_image(512))),
     }
     threading.Thread(target=stats_loop, daemon=True).start()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    threading.Thread(target=audio_loop, daemon=True).start()
+    server =ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     if show_pair:
         open_pair_page()

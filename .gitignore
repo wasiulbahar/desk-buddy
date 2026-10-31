@@ -3,3 +3,4 @@ build/
 __pycache__/
 *.exe
 icon.ico
+CLAUDE.local.md

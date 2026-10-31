@@ -16,7 +16,7 @@
   :root { --eye: rgb(90,240,255); }
   html, body {
     margin: 0; height: 100%; background: #000; overflow: hidden;
-    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+    touch-action: none; user-select: none; -webkit-user-select: none;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--eye);
   }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; transition: filter 1s; }
@@ -31,12 +31,13 @@
   #bubble.show { opacity: 1; transform: translate(-50%, 0); }
   #hud {
     position: fixed; left: 0; right: 0; bottom: max(10px, env(safe-area-inset-bottom));
-    display: flex; justify-content: center; gap: 22px; opacity: .4; pointer-events: none;
+    display: flex; justify-content: center; align-items: center; gap: 22px; opacity: .4; pointer-events: none;
     font-size: clamp(11px, 2.6vmin, 17px); font-variant-numeric: tabular-nums;
   }
   .bar { display: inline-block; width: 52px; height: 6px; margin-left: 6px; vertical-align: middle;
          background: rgba(255,255,255,.12); border-radius: 3px; overflow: hidden; }
   .bar i { display: block; height: 100%; width: 0; background: var(--eye); transition: width .8s; }
+  #snd { pointer-events: auto; cursor: pointer; padding: 6px 10px; margin: -6px -10px; }
 </style>
 </head>
 <body>
@@ -47,6 +48,7 @@
   <span>CPU<span class="bar"><i id="cpu"></i></span></span>
   <span>RAM<span class="bar"><i id="ram"></i></span></span>
   <span id="work">⏱ 0m</span>
+  <span id="snd" title="Sound on/off">🔊</span>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -58,43 +60,136 @@ const BREAK_MIN = +params.get('break') || 50;   // add ?break=25 to the URL to c
 const FUN_RE = /youtube|netflix|twitch|reddit|instagram|tiktok|facebook|prime video|disney\+|9gag/i;
 const WORK_RE = /visual studio|vs ?code|pycharm|intellij|android studio|sublime|notepad\+\+|vim|terminal|powershell|command prompt|figma|github| - (word|excel|powerpoint)$/i;
 
-// Eye shapes. lid = how far the top lid is closed, tilt > 0 angry / < 0 worried, happy = ^_^ curve.
+// Eye shapes. lid = how far the top lid is closed, tilt > 0 angry / < 0 worried, happy = ^_^ curve,
+// blush = pink cheeks, spiral = dizzy swirl eyes.
+const BASE = { w: 1, h: 1, lidL: 0, lidR: 0, tilt: 0, happy: 0, blush: 0, spiral: 0, color: [90, 240, 255] };
+const shape = o => ({ ...BASE, ...o });
 const MOODS = {
-  neutral:    { w: 1,    h: 1,    lidL: 0,   lidR: 0,   tilt: 0,    happy: 0,   color: [90, 240, 255] },
-  happy:      { w: 1.05, h: 1,    lidL: 0,   lidR: 0,   tilt: 0,    happy: .55, color: [90, 240, 255] },
-  love:       { w: 1.05, h: 1,    lidL: 0,   lidR: 0,   tilt: 0,    happy: .55, color: [255, 110, 175] },
-  focused:    { w: 1.05, h: .8,   lidL: .2,  lidR: .2,  tilt: .2,   happy: 0,   color: [90, 240, 255] },
-  sleepy:     { w: 1,    h: 1,    lidL: .55, lidR: .55, tilt: -.25, happy: 0,   color: [70, 170, 220] },
-  sleeping:   { w: 1.05, h: .08,  lidL: 0,   lidR: 0,   tilt: 0,    happy: 0,   color: [60, 120, 200] },
-  stressed:   { w: .9,   h: 1.05, lidL: .1,  lidR: .1,  tilt: -.5,  happy: 0,   color: [255, 170, 70] },
-  suspicious: { w: 1,    h: .9,   lidL: .55, lidR: .15, tilt: .3,   happy: 0,   color: [190, 140, 255] },
-  surprised:  { w: 1.2,  h: 1.25, lidL: 0,   lidR: 0,   tilt: 0,    happy: 0,   color: [130, 255, 230] },
-  lost:       { w: .8,   h: .8,   lidL: .3,  lidR: .3,  tilt: -.3,  happy: 0,   color: [90, 110, 130] },
+  neutral:     shape({}),
+  happy:       shape({ w: 1.05, happy: .55 }),
+  love:        shape({ w: 1.05, happy: .55, blush: 1, color: [255, 110, 175] }),
+  content:     shape({ w: 1.05, h: .85, lidL: .15, lidR: .15, happy: .5, blush: 1 }),
+  giggle:      shape({ w: 1.1, h: .9, happy: .62, blush: 1, color: [120, 250, 255] }),
+  curious:     shape({ w: 1.12, h: 1.18, tilt: -.1, color: [120, 250, 255] }),
+  grumpy:      shape({ h: .75, lidL: .3, lidR: .3, tilt: .5, color: [255, 120, 90] }),
+  dizzy:       shape({ w: 1.05, h: 1.05, spiral: 1, color: [255, 225, 110] }),
+  groove:      shape({ w: 1.05, h: .95, happy: .35, color: [120, 255, 200] }),
+  drowsy:      shape({ lidL: .32, lidR: .32, tilt: -.15, color: [80, 190, 235] }),
+  focused:     shape({ w: 1.05, h: .8, lidL: .2, lidR: .2, tilt: .2 }),
+  sleepy:      shape({ lidL: .55, lidR: .55, tilt: -.25, color: [70, 170, 220] }),
+  sleeping:    shape({ w: 1.05, h: .08, color: [60, 120, 200] }),
+  stressed:    shape({ w: .9, h: 1.05, lidL: .1, lidR: .1, tilt: -.5, color: [255, 170, 70] }),
+  suspicious:  shape({ h: .9, lidL: .55, lidR: .15, tilt: .3, color: [190, 140, 255] }),
+  surprised:   shape({ w: 1.2, h: 1.25, color: [130, 255, 230] }),
+  lost:        shape({ w: .8, h: .8, lidL: .3, lidR: .3, tilt: -.3, color: [90, 110, 130] }),
+  // Short poses used by quirks.
+  sneezeIn:    shape({ h: .9, lidL: .4, lidR: .4, tilt: -.3 }),
+  squint:      shape({ w: 1.15, h: .1 }),
+  stretchUp:   shape({ w: .8, h: 1.45 }),
+  stretchWide: shape({ w: 1.3, h: .7, happy: .3 }),
 };
-const TAP_LINES = ['Hehe, that tickles!', 'Hi! 😊', 'Beep boop!', "I'm watching your PC for you 🫡",
-                   '*happy robot noises*', 'You\'re doing great!', 'Boop! 🤖'];
 const FUN_LINES = ['Hmm… is this work? 👀', 'I see you…', 'Just one video, right? 🍿', 'Taking a little break? 😏'];
+const BED_LINES = ["It's getting late… 🌙", 'Bedtime soon? 😴', 'Your pillow misses you 🛏️', 'Sleepy… are you sleepy too? 🥱'];
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const store = {
+  get: k => { try { return localStorage.getItem('deskbuddy.' + k); } catch (e) { return null; } },
+  set: (k, v) => { try { localStorage.setItem('deskbuddy.' + k, v); } catch (e) {} },
+};
+
+// ---------- voice: little chirps and beeps, made on the fly (no words) ----------
+let ac = null, soundOn = store.get('sound') !== 'off';
+function audio() {
+  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
+  if (ac.state === 'suspended') ac.resume();
+  return ac;
+}
+function tone(f0, f1, dur, { type = 'sine', vol = .12, delay = 0, vib = 0, trem = 0 } = {}) {
+  const a = soundOn && audio();
+  if (!a) return;
+  const t = a.currentTime + delay, o = a.createOscillator(), g = a.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + Math.min(.03, dur / 3));
+  g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g).connect(a.destination);
+  const wobble = (rate, depth, target) => {
+    const l = a.createOscillator(), lg = a.createGain();
+    l.frequency.value = rate; lg.gain.value = depth;
+    l.connect(lg).connect(target); l.start(t); l.stop(t + dur + .05);
+  };
+  if (vib) wobble(vib, f0 * .05, o.frequency);   // wavering pitch
+  if (trem) wobble(trem, vol * .8, g.gain);      // fluttering volume (purr)
+  o.start(t); o.stop(t + dur + .05);
+}
+function noise(dur, vol, freq, delay = 0) {
+  const a = soundOn && audio();
+  if (!a) return;
+  const t = a.currentTime + delay, buf = a.createBuffer(1, Math.ceil(a.sampleRate * dur), a.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+  src.buffer = buf; f.type = 'bandpass'; f.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  src.connect(f).connect(g).connect(a.destination); src.start(t);
+}
+const sfx = {
+  chirp:    () => { tone(700, 1100, .07); tone(900, 1400, .09, { delay: .08 }); },
+  giggle:   () => { for (let i = 0; i < 4; i++) tone(950 + Math.random() * 250, 1450, .05, { delay: i * .08, vol: .08 }); },
+  laugh:    () => { for (let i = 0; i < 10; i++) tone(1000 + Math.random() * 300, 1500 - i * 30, .05, { delay: i * .09, vol: .08 }); },
+  hmph:     () => { tone(260, 170, .2, { type: 'square', vol: .035 }); noise(.12, .05, 700); },
+  purr:     () => tone(90, 85, .45, { type: 'sawtooth', vol: .03, trem: 24 }),
+  curious:  () => tone(480, 900, .2, { vol: .1 }),
+  hmm:      () => { tone(420, 540, .12, { vol: .08 }); tone(540, 380, .18, { delay: .14, vol: .08 }); },
+  sad:      () => tone(520, 290, .45, { type: 'triangle', vol: .09 }),
+  surprise: () => tone(380, 1300, .14, { vol: .11 }),
+  yawn:     () => tone(520, 200, .9, { type: 'triangle', vol: .07, vib: 5 }),
+  ah:       h => tone(300 * h, 460 * h, .35, { type: 'triangle', vol: .06 }),
+  achoo:    () => { noise(.28, .2, 2600); tone(900, 280, .16, { type: 'square', vol: .04 }); },
+  hic:      () => tone(650, 1150, .05, { type: 'square', vol: .045 }),
+  note:     f => tone(f, f * 1.01, .32, { type: 'triangle', vol: .07, vib: 6 }),
+  dizzy:    () => tone(720, 240, 1.1, { vol: .08, vib: 9 }),
+  snore:    () => { tone(110, 150, 1, { type: 'sawtooth', vol: .012 }); noise(1, .012, 450); },
+  morning:  () => [523, 659, 784, 1047].forEach((f, i) => tone(f, f, .16, { delay: i * .11, vol: .08, type: 'triangle' })),
+};
 
 // ---------- connection to the PC ----------
-let state = { x: 0, y: 0, cpu: 0, ram: 0, idle: 0, title: '', work: 0 };
+let state = { x: 0, y: 0, cpu: 0, ram: 0, idle: 0, title: '', work: 0, audio: 0 };
 let lastMsg = -1e9, lastMove = -1e9, cpuS = 0, px = 0, py = 0;
+let spin = 0, lastAng = null;                       // for "spin the mouse and it gets dizzy"
+let audioAvg = 0, musicSince = 0, lastBeat = 0;     // for dancing to music
 function onState(s) {
-  const now = performance.now();
-  if (Math.abs(s.x - px) + Math.abs(s.y - py) > 0.002) lastMove = now;
+  const now = performance.now(), vx = s.x - px, vy = s.y - py;
+  if (Math.abs(vx) + Math.abs(vy) > 0.002) lastMove = now;
   px = s.x; py = s.y;
   cpuS += (s.cpu - cpuS) * 0.02;   // smoothed so short spikes don't stress it out
   state = s; lastMsg = now;
+
+  // Add up how far the cursor's direction turns; a few fast circles in a row = dizzy.
+  if (Math.hypot(vx, vy) > 0.012) {
+    const a = Math.atan2(vy, vx);
+    if (lastAng !== null) spin = spin * .97 + (((a - lastAng) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+    lastAng = a;
+  } else { spin *= .85; lastAng = null; }
+  if (Math.abs(spin) > 16) { spin = 0; if (rateOk('dizzy', 8000)) getDizzy(); }
+
+  // Music: steady sound for 3+ seconds. A beat is a spike well above the recent average.
+  const lvl = s.audio || 0;
+  audioAvg += (lvl - audioAvg) * .05;
+  musicSince = audioAvg > .04 ? (musicSince || now) : 0;
+  if (lvl > audioAvg * 1.35 + .04 && now - lastBeat > 280) beat(now);
 }
 const connected = now => now - lastMsg < 3000;
+const musicPlaying = now => musicSince && now - musicSince > 3000;
 
 // Demo mode (face.html?demo) for the website: no PC needed. The page around it sends
 // {x, y} to steer the eyes and {mood} to show off a mood.
 const DEMO = params.has('demo');
 const DEMO_LINES = {
   happy: 'Beep boop! 😊', love: 'Hehe, that tickles! 💕', focused: 'Focus mode 🤓',
-  sleepy: '*yawn* 🥱', sleeping: '', stressed: 'Phew… CPU at 97% 🥵',
+  sleepy: '*yawn* 🥱', stressed: 'Phew… CPU at 97% 🥵',
   suspicious: 'Hmm… is this work? 👀', surprised: "Oh! You're back! 👋",
 };
 if (DEMO) {
@@ -102,15 +197,17 @@ if (DEMO) {
   addEventListener('message', e => {
     const d = e.data || {};
     if (typeof d.x === 'number') demo = { x: clamp(d.x, -1, 1), y: clamp(d.y, -1, 1) };
-    if (d.mood && MOODS[d.mood]) { setOverride(d.mood, 5000); if (DEMO_LINES[d.mood]) say(DEMO_LINES[d.mood], 2500); }
+    if (d.mood === 'dizzy') getDizzy();
+    else if (d.mood && QUIRKS[d.mood]) { cancelQuirk(); QUIRKS[d.mood](); }
+    else if (d.mood && MOODS[d.mood]) { setOverride(d.mood, 5000); if (DEMO_LINES[d.mood]) say(DEMO_LINES[d.mood], 2500); }
   });
   addEventListener('pointermove', e => demo = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 });
-  setInterval(() => onState({ ...demo, cpu: 12, ram: 45, idle: 0, title: '', work: 12 }), 66);
+  setInterval(() => onState({ ...demo, cpu: 12, ram: 45, idle: 0, title: '', work: 12, audio: 0 }), 66);
 } else {
   new EventSource('events').onmessage = e => onState(JSON.parse(e.data));
 }
 
-// ---------- speech bubble ----------
+// ---------- speech bubble (used sparingly - it mostly talks with its face) ----------
 const bubble = $('bubble');
 let bubbleTimer = 0;
 function say(html, ms) {
@@ -123,7 +220,8 @@ const showReminder = () => say(`You've been working ${Math.round(state.work)} mi
 
 // ---------- mood brain ----------
 let baseMood = 'neutral', mood = 'neutral', override = null, reminding = false, breakAck = 0;
-let nextHappy = performance.now() + 20000;
+let nextHappy = performance.now() + 20000, nextQuirk = performance.now() + 25000;
+let nextBedtime = performance.now() + 60000, nextSnore = 0, greetAfter = performance.now() + 2600, nextSeenSave = 0;
 const lastSaid = {};
 function rateOk(key, ms) {
   const n = performance.now();
@@ -131,15 +229,34 @@ function rateOk(key, ms) {
   lastSaid[key] = n; return true;
 }
 const setOverride = (m, ms) => override = { mood: m, until: performance.now() + ms };
+const overridden = (m, now = performance.now()) => override && now < override.until && (!m || override.mood === m);
+const lateNight = () => new Date().getHours() < 5;
 
-function onMoodChange(prev, m) {
-  if (prev === 'lost' && m !== 'lost') { setOverride('happy', 1500); say('Connected! Hi there 👋', 2500); }
-  else if (prev === 'sleeping' && m !== 'lost') { setOverride('surprised', 1500); say("Oh! You're back! 👋", 2500); }
-  else if (m === 'lost') say('Looking for your PC…<br><small>is deskbuddy.py running?</small>', 0);
-  else if (m === 'sleepy') say('*yawn* 🥱', 2000);
-  else if (m === 'stressed' && rateOk('cpu', 60000)) say(`Phew… CPU at ${Math.round(cpuS)}% 🥵`, 3000);
-  else if (m === 'suspicious' && rateOk('fun', 180000)) say(pick(FUN_LINES), 3000);
-  else if (m === 'focused' && rateOk('focus', 600000)) say('Focus mode 🤓', 2000);
+function onMoodChange(prev, m, now) {
+  if (prev === 'lost' && m !== 'lost') { setOverride('happy', 1500); sfx.chirp(); say('Connected! Hi there 👋', 2500); greetAfter = now + 2600; }
+  else if (prev === 'sleeping' && m !== 'lost') { setOverride('surprised', 1500); sfx.surprise(); say("Oh! You're back! 👋", 2500); }
+  else if (m === 'lost') { sfx.sad(); say('Looking for your PC…<br><small>is Desk Buddy running?</small>', 0); }
+  else if (m === 'sleepy') sfx.yawn();
+  else if (m === 'stressed' && rateOk('cpu', 60000)) { sfx.sad(); say(`Phew… CPU at ${Math.round(cpuS)}% 🥵`, 3000); }
+  else if (m === 'suspicious' && rateOk('fun', 180000)) { sfx.hmm(); say(pick(FUN_LINES), 3000); }
+  else if (m === 'groove' && rateOk('groove', 60000)) sfx.chirp();
+}
+
+// First time it sees you each day: a stretch and a hello. After 2+ days apart: it really missed you.
+function checkGreeting(now) {
+  if (!greetAfter || now < greetAfter || !connected(now) || state.idle > 30) return;
+  greetAfter = 0;
+  const today = new Date().toDateString(), lastSeen = +store.get('lastSeen') || 0;
+  if (store.get('lastDay') === today) return;
+  store.set('lastDay', today);
+  if (lastSeen && Date.now() - lastSeen > 2 * 864e5) {
+    cancelQuirk(); setOverride('love', 3500); sfx.laugh(); bounceV = -5;
+    say('I missed you so much!! 💕', 3500);
+  } else {
+    const h = new Date().getHours();
+    QUIRKS.stretch();
+    say(h < 12 ? 'Good morning! ☀️' : h < 17 ? 'Good afternoon! 🌤️' : 'Good evening! 🌙', 3000);
+  }
 }
 
 function think(now) {
@@ -148,24 +265,102 @@ function think(now) {
   else if (state.idle > 600) m = 'sleeping';
   else if (state.idle > 120) m = 'sleepy';
   else if (cpuS > 85) m = 'stressed';
+  else if (musicPlaying(now)) m = 'groove';
   else if (FUN_RE.test(state.title)) m = 'suspicious';
   else if (WORK_RE.test(state.title)) m = 'focused';
+  else if (lateNight()) m = 'drowsy';
   else m = 'neutral';
-  if (m !== baseMood) { onMoodChange(baseMood, m); baseMood = m; }
+  if (baseMood === 'lost' && m !== 'lost' && !greetAfter) greetAfter = now + 2600;
+  if (m !== baseMood) { onMoodChange(baseMood, m, now); baseMood = m; }
+
+  checkGreeting(now);
+  if (connected(now) && state.idle < 60 && now > nextSeenSave) { store.set('lastSeen', Date.now()); nextSeenSave = now + 60000; }
 
   // Break reminder. The PC resets "work" after 5 min away, which also counts as a break.
   if (state.work < breakAck) breakAck = 0;
   const due = connected(now) && state.work - breakAck >= BREAK_MIN;
-  if (due && !reminding && m !== 'sleeping' && m !== 'sleepy') { reminding = true; showReminder(); }
+  if (due && !reminding && m !== 'sleeping' && m !== 'sleepy') { reminding = true; sfx.chirp(); showReminder(); }
   if (!due && reminding) { reminding = false; bubble.classList.remove('show'); }
 
-  if (m === 'neutral' && now > nextHappy) {
+  const calm = (m === 'neutral' || m === 'drowsy' || m === 'focused') && !overridden() && !reminding && !touch && !quirkTimers.length;
+  if (calm && lateNight() && state.idle < 60 && now > nextBedtime) {
+    nextBedtime = now + 20 * 60000;
+    setOverride('sleepy', 2000); sfx.yawn(); say(pick(BED_LINES), 3500);
+  } else if (calm && now > nextQuirk) {
+    nextQuirk = now + 40000 + Math.random() * 60000;
+    const q = lateNight() || m === 'drowsy' ? pick(['nodOff', 'nodOff', 'sneeze', 'hum']) : pick(['sneeze', 'hiccup', 'fly', 'fly', 'hum', 'nodOff']);
+    QUIRKS[q]();
+  } else if (m === 'neutral' && calm && now > nextHappy) {
     nextHappy = now + 20000 + Math.random() * 25000;
-    if (Math.random() < .4) setOverride('happy', 1600);
+    if (Math.random() < .4) { setOverride('happy', 1600); if (Math.random() < .5) sfx.chirp(); }
   }
 
-  const next = override && now < override.until ? override.mood : (reminding ? 'happy' : m);
+  const next = overridden(null, now) ? override.mood : (reminding ? 'happy' : m);
   if (next !== mood) { mood = next; updateGlow(); }
+}
+
+// ---------- quirks: little things it does on its own ----------
+let quirkTimers = [], flyStart = -1e9, humUntil = 0, lookHold = null, swing = 1, grumpySide = 1;
+function play(steps) {
+  for (const [ms, fn] of steps) quirkTimers.push(setTimeout(fn, ms));
+  quirkTimers.push(setTimeout(() => quirkTimers = [], Math.max(...steps.map(s => s[0])) + 50));
+}
+function cancelQuirk() { quirkTimers.forEach(clearTimeout); quirkTimers = []; flyStart = -1e9; humUntil = 0; lookHold = null; }
+const hold = (x, y, ms) => lookHold = { x, y, until: performance.now() + ms };
+
+const QUIRKS = {
+  sneeze: () => play([
+    [0,    () => { setOverride('sneezeIn', 1400); hold(0, -.5, 1400); sfx.ah(1); }],
+    [650,  () => sfx.ah(1.25)],
+    [1350, () => { setOverride('squint', 450); hold(0, .4, 450); bounceV = 6; sfx.achoo(); }],
+    [1800, () => setOverride('surprised', 500)],
+    [2300, () => { setOverride('happy', 900); sfx.giggle(); }],
+  ]),
+  hiccup: () => play([0, 800, 1600, 2400].map(ms => [ms, () => { setOverride('surprised', 260); bounceV = -4; sfx.hic(); }])
+    .concat([[3000, () => setOverride('content', 900)]])),
+  fly: () => play([
+    [0,    () => flyStart = performance.now()],
+    [4300, () => { setOverride('focused', 500); bounceV = -5; sfx.hmm(); }],   // tries to catch it...
+    [4900, () => { setOverride('surprised', 700); sfx.surprise(); }],         // ...and it zooms away
+    [6000, () => { flyStart = -1e9; setOverride('happy', 800); }],
+  ]),
+  hum: () => {
+    humUntil = performance.now() + 5000;
+    setOverride('content', 5000);
+    const scale = [523, 587, 659, 784, 880, 1047];
+    play([...Array(9)].map((_, i) => [i * 520, () => sfx.note(pick(scale))]));
+  },
+  nodOff: () => play([
+    [0,    () => { setOverride('sleepy', 1900); hold(0, .35, 2800); }],
+    [1800, () => { setOverride('sleeping', 1000); sfx.snore(); }],
+    [2800, () => { setOverride('surprised', 700); bounceV = -6; sfx.surprise(); }],   // whoa, I'm awake!
+    [3500, () => { setOverride('happy', 800); sfx.giggle(); }],
+  ]),
+  stretch: () => play([
+    [0,    () => { setOverride('stretchUp', 800); bounceV = -3; sfx.yawn(); }],
+    [800,  () => setOverride('stretchWide', 600)],
+    [1400, () => { setOverride('happy', 1500); sfx.morning(); }],
+  ]),
+};
+
+function getDizzy() {
+  cancelQuirk(); setOverride('dizzy', 3500); sfx.dizzy();
+  play([[3500, () => { setOverride('content', 800); }]]);
+}
+
+function beat(now) {
+  lastBeat = now;
+  if (mood !== 'groove') return;
+  swing = -swing; bounceV -= 2.2;
+}
+
+// Where the fly is (-1..1 screen space): buzzes around, then zooms off at the end.
+function flyPos(now) {
+  const t = (now - flyStart) / 1000;
+  return {
+    x: .75 * Math.sin(t * 1.7) * Math.cos(t * .6) + Math.sin(t * 13) * .03 + Math.max(0, t - 4.9) * 2.5,
+    y: -.45 + .3 * Math.sin(t * 2.3 + 1) + Math.cos(t * 11) * .03 - Math.max(0, t - 4.9) * 1.2,
+  };
 }
 
 // ---------- drawing ----------
@@ -220,6 +415,20 @@ function drawEye(cx, cy, w, h, lid, tilt, happy, isLeft, color) {
   ctx.restore();
 }
 
+function drawSpiral(cx, cy, size, dir, now, color) {
+  ctx.save();
+  ctx.strokeStyle = color; ctx.lineWidth = S * .055; ctx.lineCap = 'round';
+  ctx.beginPath();
+  const rot = now / 140 * dir, steps = 120, turns = 3;
+  for (let i = 0; i <= steps; i++) {
+    const a = i / steps * turns * Math.PI * 2 + rot, r = size * i / steps;
+    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function floaty(text, x, y, size, alpha, color) {
   ctx.globalAlpha = alpha; ctx.fillStyle = color;
   ctx.font = `bold ${size}px system-ui, sans-serif`; ctx.textAlign = 'center';
@@ -229,16 +438,28 @@ function floaty(text, x, y, size, alpha, color) {
 function draw(now, blink) {
   ctx.clearRect(0, 0, W, H);
   const color = `rgb(${col.map(Math.round)})`;
+  ctx.save();
+  if (cur.spiral > .05) {   // dizzy: the whole face wobbles
+    ctx.translate(W / 2, H / 2); ctx.rotate(Math.sin(now / 180) * .12 * cur.spiral); ctx.translate(-W / 2, -H / 2);
+  }
   const jitter = mood === 'stressed' ? S * 0.012 : 0;
   const breathe = (mood === 'sleeping' || mood === 'sleepy') ? Math.sin(now / 900) * S * .04 : 0;
-  const cx = W / 2 + look.x * S * .45 + (Math.random() - .5) * jitter;
+  const wobble = Math.sin(now / 120) * S * .08 * cur.spiral;
+  const cx = W / 2 + look.x * S * .45 + (Math.random() - .5) * jitter + wobble;
   const cy = H / 2 + look.y * S * .3 + breathe + bounce * S * .5 - (hudOn ? S * .06 : 0);
   const gap = S * .72;
   for (const side of [-1, 1]) {
     const persp = 1 + side * look.x * .07;   // eye nearer the look direction gets a bit bigger
     const w = S * .78 * cur.w * persp;
     const h = Math.max(S * cur.h * persp * blink, S * .05);
-    drawEye(cx + side * gap, cy, w, h, side < 0 ? cur.lidL : cur.lidR, cur.tilt, cur.happy, side < 0, color);
+    const ex = cx + side * gap;
+    if (cur.spiral > .5) drawSpiral(ex, cy, Math.min(w, h) * .5, side, now, color);
+    else drawEye(ex, cy, w, h, side < 0 ? cur.lidL : cur.lidR, cur.tilt, cur.happy, side < 0, color);
+    if (cur.blush > .02) {
+      ctx.globalAlpha = cur.blush * .5; ctx.fillStyle = 'rgb(255,120,170)';
+      ctx.beginPath(); ctx.ellipse(ex + side * S * .12, cy + S * .62, S * .17, S * .065, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
   }
   const rx = cx + gap, top = cy - S / 2;
 
@@ -259,8 +480,27 @@ function draw(now, blink) {
       const p = (now / 1600 + i / 4) % 1;
       floaty('♥', W / 2 + Math.sin(i * 2.3 + p * 4) * S * 1.3, cy + S * .7 - p * S * 1.4, S * .22, Math.sin(p * Math.PI), color);
     }
+  } else if (mood === 'grumpy') {
+    floaty('💢', cx + grumpySide * gap * 1.6, top, S * .3, .9, color);
   } else if (mood === 'lost') {
     floaty('?', rx + S * .55, top, S * .35, .5 + .5 * Math.sin(now / 400), color);
+  }
+  if (mood === 'groove' || now < humUntil) {
+    for (let i = 0; i < 3; i++) {
+      const p = (now / 1800 + i / 3) % 1, side = i % 2 ? 1 : -1;
+      floaty(i % 2 ? '♪' : '♫', cx + side * gap * (1.5 + p * .3), cy - p * S * 1.1, S * .26, Math.sin(p * Math.PI), color);
+    }
+  }
+  ctx.restore();
+
+  if (now - flyStart < 6000) {   // the fly, drawn outside the wobble
+    const f = flyPos(now), x = W / 2 + f.x * W * .45, y = H / 2 + f.y * H * .4, r = S * .05;
+    ctx.fillStyle = 'rgba(225,240,255,.6)';   // flapping wings
+    for (const s of [-1, 1]) {
+      ctx.beginPath(); ctx.ellipse(x + s * r, y - r * .8, r * 1.1, r * (Math.sin(now / 15) > 0 ? .5 : .25), s * .5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#16232b'; ctx.strokeStyle = '#d6e4ea'; ctx.lineWidth = Math.max(1.5, r * .25);   // dark body, light rim: visible on eyes and background
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
 }
 
@@ -270,22 +510,36 @@ function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   think(now);
 
-  // Where to look: follow the PC cursor while it moves, otherwise glance around.
-  if (mood === 'sleeping') lookT = { x: 0, y: .15 };
-  else if (reminding || mood === 'surprised') lookT = { x: 0, y: 0 };
+  // Where to look.
+  if (touch) lookT = { x: clamp((touch.lx / W * 2 - 1) * 1.3, -1, 1), y: clamp((touch.ly / H * 2 - 1) * 1.3, -1, 1) };
+  else if (mood === 'sleeping') lookT = { x: 0, y: .15 };
+  else if (lookHold && now < lookHold.until) lookT = { x: lookHold.x, y: lookHold.y };
+  else if (now - flyStart < 6000) lookT = flyPos(now);
+  else if (now < humUntil) lookT = { x: Math.sin(now / 400) * .35, y: -.1 };
+  else if (mood === 'groove') lookT = { x: swing * .35, y: -.05 };
+  else if (mood === 'grumpy') lookT = { x: grumpySide * .8, y: .15 };
+  else if (reminding || mood === 'surprised' || mood === 'dizzy') lookT = { x: 0, y: 0 };
   else if (connected(now) && now - lastMove < 2500) lookT = { x: clamp(state.x, -1, 1), y: clamp(state.y, -1, 1) };
   else if (now > nextSaccade) {
     nextSaccade = now + 1200 + Math.random() * 3000;
     lookT = Math.random() < .35 ? { x: 0, y: 0 } : { x: (Math.random() * 2 - 1) * .7, y: (Math.random() * 2 - 1) * .5 };
   }
 
+  // Holding a finger still on it: it gets curious about your finger.
+  if (touch && !touch.petting && now - touch.t > 550) {
+    if (!touch.curious) { touch.curious = true; sfx.curious(); }
+    setOverride('curious', 300);
+  }
+  if (DEMO && mood === 'groove' && now - lastBeat > 500) beat(now);   // the website demo has no music to hear
+  if (mood === 'sleeping' && now > nextSnore) { nextSnore = now + 3800; sfx.snore(); }
+
   const T = MOODS[mood];
   const ks = 1 - Math.exp(-dt * 8), kl = 1 - Math.exp(-dt * (mood === 'focused' ? 18 : 12));
-  for (const k of ['w', 'h', 'lidL', 'lidR', 'tilt', 'happy']) cur[k] += (T[k] - cur[k]) * ks;
+  for (const k of ['w', 'h', 'lidL', 'lidR', 'tilt', 'happy', 'blush', 'spiral']) cur[k] += (T[k] - cur[k]) * ks;
   for (let i = 0; i < 3; i++) col[i] += (T.color[i] - col[i]) * ks;
   look.x += (lookT.x - look.x) * kl; look.y += (lookT.y - look.y) * kl;
 
-  if (now > nextBlink && mood !== 'sleeping') {
+  if (now > nextBlink && mood !== 'sleeping' && mood !== 'dizzy') {
     blinkStart = now;
     nextBlink = now + (Math.random() < .15 ? 260 : 2000 + Math.random() * 4500);
   }
@@ -299,7 +553,7 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-// ---------- touch ----------
+// ---------- touch: poke, pet, tickle, hold ----------
 const installed = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone;
 function keepAwake() {
   // Only allowed on "secure" pages - works once the phone trusts this address (see setup steps).
@@ -316,26 +570,73 @@ if (!DEMO) {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   keepAwake();
 }
-addEventListener('pointerdown', () => {
-  if (!DEMO) {
-    goFullscreen();   // every tap, so it pops back to fullscreen if you swiped out
-    keepAwake();
-  }
+
+let touch = null, pokes = [];
+const tickleSpot = { x: .2 + Math.random() * .6, y: .7 + Math.random() * .2 };   // a secret spot, new every time
+
+function poke(x, y) {
+  const now = performance.now();
   bounceV = -3.5;
   if (reminding) {
     reminding = false; breakAck = state.work;
-    setOverride('love', 2200); say('Thanks! Your body says thank you too 💙', 2500);
+    setOverride('love', 2200); sfx.chirp(); say('Thanks! Your body says thank you too 💙', 2500);
   } else if (mood === 'sleeping') {
-    setOverride('surprised', 1200); say('Huh?! I was just resting my eyes…', 2500);
+    setOverride('surprised', 1200); sfx.surprise(); say('Huh?! I was just resting my eyes…', 2500);
+  } else if (Math.hypot(x - tickleSpot.x * W, y - tickleSpot.y * H) < S * .45) {
+    setOverride('giggle', 2600); sfx.laugh();   // found the tickle spot!
+    play([300, 650, 1000, 1350, 1700].map(ms => [ms, () => bounceV = -4]));
+  } else if (overridden('grumpy', now)) {
+    setOverride('grumpy', 3000); grumpySide = -grumpySide; sfx.hmph();
   } else {
-    setOverride(Math.random() < .3 ? 'love' : 'happy', 1800);
-    if (rateOk('tap', 4000)) say(pick(TAP_LINES), 2200);
+    pokes = pokes.filter(t => now - t < 6000).concat(now);
+    if (pokes.length >= 6) { pokes = []; grumpySide = Math.random() < .5 ? -1 : 1; setOverride('grumpy', 6000); sfx.hmph(); }
+    else if (pokes.length >= 4) { setOverride('surprised', 1000); sfx.hmm(); }
+    else { setOverride(Math.random() < .25 ? 'love' : 'giggle', 1300); sfx.giggle(); }
   }
+}
+
+addEventListener('pointerdown', e => {
+  if (e.target.closest('#snd')) return;
+  if (!DEMO) { goFullscreen(); keepAwake(); }
+  audio();   // phones only allow sound after the first touch
+  cancelQuirk();
+  touch = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(),
+            dist: 0, petting: false, curious: false, forgive: 0, lastPurr: 0 };
 });
+addEventListener('pointermove', e => {
+  if (!touch) return;
+  const now = performance.now(), d = Math.hypot(e.clientX - touch.lx, e.clientY - touch.ly);
+  touch.lx = e.clientX; touch.ly = e.clientY; touch.dist += d;
+  if (touch.dist < 25) return;
+  touch.petting = true;
+  if (overridden('grumpy', now)) {   // petting makes up for the poking
+    touch.forgive += d;
+    if (touch.forgive > S * 2) { pokes = []; setOverride('love', 1800); sfx.chirp(); touch.forgive = -1e9; }
+    return;
+  }
+  if (!overridden('love', now)) setOverride('content', 700);
+  if (now - touch.lastPurr > 450) { touch.lastPurr = now; sfx.purr(); }
+});
+function release() {
+  if (!touch) return;
+  if (touch.curious) { setOverride('happy', 1000); sfx.chirp(); }
+  else if (!touch.petting && performance.now() - touch.t < 400) poke(touch.x, touch.y);
+  touch = null;
+}
+addEventListener('pointerup', release);
+addEventListener('pointercancel', release);
 addEventListener('dblclick', () => { hudOn = !hudOn; $('hud').style.display = hudOn ? '' : 'none'; });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) keepAwake(); });
 
 // ---------- HUD ----------
+const snd = $('snd');
+const showSound = () => { snd.textContent = soundOn ? '🔊' : '🔇'; };
+snd.addEventListener('pointerdown', e => {
+  e.stopPropagation();
+  soundOn = !soundOn; store.set('sound', soundOn ? 'on' : 'off'); showSound();
+  if (soundOn) sfx.chirp();
+});
+showSound();
 setInterval(() => {
   const d = new Date();
   $('clock').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
