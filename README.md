@@ -24,6 +24,10 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | You hold the screen for 2 seconds | Opens its toolbox: timer, clock, stopwatch, focus, breathe, dice ⏳ |
 | You shake / tilt / lay down the phone | Gets dizzy / rolls its eyes like marbles / relaxes 📳 |
 | You clap twice | Wakes up 👏 |
+| It guesses music vs movie wrong | Tap 🎵/🍿 to correct it; it learns the title, channel and telling words 🎓 |
+| You work, read, chat, game… | Learns your rhythm: cheers focus streaks, notices context-switching, sums up your day (Insights page) 🧠 |
+| You type / the PC is loading / the internet drops | Typing dots ⌨️ / spinner eyes ⏳ / worried searching 📡 |
+| You copy, screenshot, mute or max the volume | 📋 / camera flash 📸 / shh 🤫 / covers its eyes 🙉 |
 | You spend time together | Friendship grows from level 1 (shy) to 5 (best friends) 💞 |
 | Nothing much happening | Sneezes, hiccups, hums, nods off and chases flies 🤧 |
 

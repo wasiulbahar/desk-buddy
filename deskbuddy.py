@@ -32,13 +32,16 @@ import urllib.parse
 import urllib.request
 import webbrowser
 import winreg
+from collections import deque
 from ctypes import wintypes
 from email.header import decode_header, make_header
 from email.utils import parseaddr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import brain
+
 APP_NAME = "Desk Buddy"
-VERSION = "2.1"
+VERSION = "2.2"
 PORT = int(os.environ.get("DESKBUDDY_PORT", 8765))
 HTTPS_PORT = PORT + 1     # the secure link, needed for the phone's motion sensors and microphone
 FPS = 15                  # how often the phone gets cursor updates
@@ -125,6 +128,71 @@ def active_window_title():
     return buf.value
 
 
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.MonitorFromWindow.restype = wintypes.HANDLE
+user32.LoadCursorW.restype = wintypes.HANDLE
+user32.GetClipboardSequenceNumber.restype = wintypes.DWORD
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+
+
+def active_process():
+    """The program in front, like 'code.exe' (just its name: used to tell coding from chatting)."""
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
+    handle = kernel32.OpenProcess(0x1000, False, pid.value)   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ""
+    try:
+        buf, size = ctypes.create_unicode_buffer(260), wintypes.DWORD(260)
+        return os.path.basename(buf.value).lower() if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)) else ""
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+
+def is_fullscreen():
+    """True when the front window covers its whole screen (games, fullscreen videos)."""
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd or hwnd in (user32.GetDesktopWindow(), user32.GetShellWindow()):
+        return False
+    r, mi = wintypes.RECT(), MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+    user32.GetWindowRect(hwnd, ctypes.byref(r))
+    if not user32.GetMonitorInfoW(user32.MonitorFromWindow(hwnd, 2), ctypes.byref(mi)):
+        return False
+    m = mi.rcMonitor
+    return r.left <= m.left and r.top <= m.top and r.right >= m.right and r.bottom >= m.bottom
+
+
+class CURSORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD), ("hCursor", wintypes.HANDLE), ("ptScreenPos", wintypes.POINT)]
+
+
+BUSY_CURSORS = {user32.LoadCursorW(None, 32514), user32.LoadCursorW(None, 32650)}   # the hourglass and "working in background"
+
+
+def busy_cursor():
+    ci = CURSORINFO(cbSize=ctypes.sizeof(CURSORINFO))
+    return bool(user32.GetCursorInfo(ctypes.byref(ci))) and ci.hCursor in BUSY_CURSORS
+
+
+class SYSTEM_POWER_STATUS(ctypes.Structure):
+    _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte), ("BatteryLifePercent", ctypes.c_ubyte),
+                ("SystemStatusFlag", ctypes.c_ubyte), ("BatteryLifeTime", wintypes.DWORD), ("BatteryFullLifeTime", wintypes.DWORD)]
+
+
+def pc_power():
+    """The laptop's battery, or None on a desktop PC."""
+    s = SYSTEM_POWER_STATUS()
+    kernel32.GetSystemPowerStatus(ctypes.byref(s))
+    if s.BatteryFlag == 128 or s.BatteryLifePercent == 255:
+        return None
+    return {"percent": s.BatteryLifePercent, "charging": s.ACLineStatus == 1}
+
+
 def cursor_position():
     """Cursor position across all monitors, scaled to -1..1 on each axis."""
     pt = wintypes.POINT()
@@ -135,7 +203,8 @@ def cursor_position():
 
 stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0,
          "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0, "backspaces": 0,
-         "beat": None}
+         "beat": None, "mediaKind": None, "activity": None, "day": None, "typing": 0, "busy": False, "online": True,
+         "pcBattery": None, "clip": None, "volume": None, "fullscreen": False, "cmd": None}
 
 
 # ---------- saved files: settings (secrets encrypted by Windows) and friendship ----------
@@ -192,6 +261,8 @@ DEFAULT_PREFS = {
     "breaks": True, "breakMinutes": 50, "bedtime": True, "mailAlerts": True, "calendarAlerts": True,
     "soundOutput": "phone", "volume": 80, "cheeky": 0, "sensors": True, "mic": True,
     "movie": True, "greetings": True, "spin": True, "toolbox": True, "babble": True,
+    "typing": True, "loading": True, "offline": True, "pcBattery": True, "clipboard": True, "volumeReact": True,
+    "gaming": True, "patterns": True,
 }
 PREF_CHOICES = {"soundOutput": ("phone", "pc", "both", "off")}
 PREF_RANGES = {"breakMinutes": (10, 180), "volume": (0, 100), "cheeky": (0, 3)}
@@ -236,6 +307,10 @@ if buddy.get("personality") not in PERSONALITIES:   # first run: a brand-new bud
 buddy.setdefault("gender", "neutral")   # buddies born before genders existed
 bond_lock = threading.Lock()
 stats["prefs"] = dict(prefs)
+
+# Learning: what counts as music vs movie (from your corrections), and your work pattern.
+learner = brain.MediaLearner(os.path.join(DATA_DIR, "learned.json"))
+tracker = brain.ActivityTracker(os.path.join(DATA_DIR, "activity.json"))
 
 
 def add_points(kind):
@@ -300,6 +375,7 @@ def media_loop():
             except Exception:
                 info = None
             stats["media"] = info
+            stats["mediaKind"] = learner.classify(info, stats["title"])   # music, movie or ignore (and why)
             await asyncio.sleep(1)
 
     try:
@@ -668,6 +744,7 @@ def audio_loop():
         dev = getattr(dev, "_dev", dev)  # newer pycaw wraps the raw device
         meter = ctypes.cast(dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None),
                             ctypes.POINTER(IAudioMeterInformation))
+        volume = getattr(AudioUtilities.GetSpeakers(), "EndpointVolume", None)   # for "muted" / "too loud!"
     except Exception:
         return  # no speakers or pycaw missing: the robot just won't dance
     level, beats, tick = 0.0, BeatTracker(), 0
@@ -676,6 +753,11 @@ def audio_loop():
             peak = meter.GetPeakValue()
         except Exception:
             peak = 0.0
+        if volume is not None and tick % 50 == 0:
+            try:
+                stats["volume"] = {"level": round(volume.GetMasterVolumeLevelScalar(), 2), "muted": bool(volume.GetMute())}
+            except Exception:
+                volume = None
         level = max(peak, level * 0.8)   # fast attack, slow release, so beats show up as clear spikes
         beats.feed(peak, time.time())
         tick += 1
@@ -706,13 +788,61 @@ def stats_loop():
             if active % 600 == 0:
                 add_points("time")
         stats["buddy"] = buddy_info()
+        title, now = active_window_title(), time.time()
         stats.update(
             cpu=round(100 * (1 - d_idle / total)) if total else 0,
             ram=ram_percent(),
             idle=round(idle),
-            title=active_window_title(),
-            work=round((time.time() - work_session["start"]) / 60, 1),
+            title=title,
+            work=round((now - work_session["start"]) / 60, 1),
+            pcBattery=pc_power(),
         )
+        # What you're doing (by kind of app), for your work pattern.
+        media, kind = stats["media"] or {}, (stats["mediaKind"] or {}).get("kind")
+        playing = kind if media.get("playing") else None
+        full = is_fullscreen()
+        key = brain.categorize(active_process(), title, playing, full)
+        if key == "browsing" and playing == "music":
+            key = "music"
+        tracker.tick(now, idle < 60 or playing == "movie", key)   # watching a film counts, even hands-off
+        stats["activity"], stats["fullscreen"] = tracker.now(now), full and key == "gaming"
+        if int(now) % 15 == 0 or stats["day"] is None:
+            day = tracker.summary()
+            stats["day"] = {k: day[k] for k in ("activeMin", "productiveMin", "breakdown", "first", "usualStart", "usualEnd",
+                                                "longestFocusMin", "daysTracked")}
+
+
+def signals_loop():
+    """Little things worth a reaction: the busy (loading) cursor, copying, and screenshots."""
+    last_seq, clips, busy_since = user32.GetClipboardSequenceNumber(), 0, 0.0
+    while True:
+        now = time.time()
+        busy_since = (busy_since or now) if prefs["loading"] and busy_cursor() else 0.0
+        stats["busy"] = bool(busy_since and now - busy_since > 0.4)
+        seq = user32.GetClipboardSequenceNumber()
+        if seq != last_seq:
+            last_seq = seq
+            if prefs["clipboard"]:
+                clips += 1
+                image = user32.IsClipboardFormatAvailable(8) or user32.IsClipboardFormatAvailable(2)   # CF_DIB / CF_BITMAP
+                stats["clip"] = {"n": clips, "kind": "image" if image else "copy"}
+        time.sleep(0.25)
+
+
+def net_loop():
+    """Is the internet up? (A quick connection attempt to well-known servers; nothing is sent.)"""
+    while True:
+        ok = False
+        if prefs["offline"]:
+            for host in (("1.1.1.1", 443), ("8.8.8.8", 443), ("www.msftconnecttest.com", 80)):
+                try:
+                    socket.create_connection(host, timeout=3).close()
+                    ok = True
+                    break
+                except OSError:
+                    pass
+        stats["online"] = ok or not prefs["offline"]
+        time.sleep(10 if ok else 5)
 
 
 def lan_ip():
@@ -795,20 +925,34 @@ def start_secure_server():
 phone_caps = {"secure": False, "motion": "off", "mic": "off", "at": 0}
 
 
+TYPING_KEYS = [0x20] + list(range(0x30, 0x3A)) + list(range(0x41, 0x5B)) + [0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xDE]
+
+
 def keys_loop():
-    """Counts Backspace presses for Cheeky mode's typo jokes. Only that one key, only as a number,
-    and only while Cheeky mode is set to Spicy."""
-    count, was_down = 0, False
+    """Counts key presses as plain numbers, never which key and never any text: Backspace for Cheeky
+    mode's typo jokes (Spicy only), and letters/numbers/space for the typing face (presses per second)."""
+    count, was_back, held, presses = 0, False, set(), deque()
     while True:
-        if prefs["cheeky"] >= 3:
+        typing_on, spicy = prefs["typing"], prefs["cheeky"] >= 3
+        if not typing_on and not spicy:
+            stats["typing"] = 0
+            time.sleep(1)
+            continue
+        now = time.time()
+        if spicy:
             down = bool(user32.GetAsyncKeyState(0x08) & 0x8000)   # VK_BACK
-            if down and not was_down:
+            if down and not was_back:
                 count += 1
                 stats["backspaces"] = count
-            was_down = down
-            time.sleep(0.03)
-        else:
-            time.sleep(1)
+            was_back = down
+        if typing_on:
+            down_now = {k for k in TYPING_KEYS if user32.GetAsyncKeyState(k) & 0x8000}
+            presses.extend(now for _ in down_now - held)
+            held = down_now
+            while presses and now - presses[0] > 3:
+                presses.popleft()
+            stats["typing"] = round(len(presses) / 3, 1)
+        time.sleep(0.03)
 
 
 # ---------- icons, app manifest, pairing page ----------
@@ -868,9 +1012,56 @@ def qr_svg(text):
 
 # ---------- the dashboard's API (only answers this PC) ----------
 
+phone_tools = {"state": None, "at": 0}   # the phone's timer/stopwatch/focus, so the dashboard can show them
+
+
 def live_status():
-    caps = phone_caps if time.time() - phone_caps["at"] < 120 else None
-    return {"phones": phones, "buddy": buddy_info(), "phoneCaps": caps, **services}
+    now = time.time()
+    caps = phone_caps if now - phone_caps["at"] < 120 else None
+    media = stats["media"] or {}
+    return {"phones": phones, "buddy": buddy_info(), "phoneCaps": caps, **services,
+            "tools": phone_tools["state"] if now - phone_tools["at"] < 5 else None,
+            "nowPlaying": {**(stats["mediaKind"] or {}), "playing": bool(media.get("playing"))} if media else None,
+            "activity": stats["activity"]}
+
+
+def teach_media(data):
+    """You corrected music vs movie: remember it for this title, or everything from this channel/app."""
+    learner.teach(data.get("kind"), "source" if data.get("scope") == "source" else "title", stats["media"], stats["title"])
+    stats["mediaKind"] = learner.classify(stats["media"], stats["title"])
+    return {"music": "Got it: that's music 🎵", "movie": "Got it: that's a movie 🍿", "ignore": "Got it: I'll leave that one alone"}[data["kind"]]
+
+
+def api_media(data):
+    if data.get("forget"):
+        learner.forget(data["forget"], str(data.get("key", "")))
+        stats["mediaKind"] = learner.classify(stats["media"], stats["title"])
+        return "Forgotten"
+    return teach_media(data)
+
+
+TOOL_ACTIONS = {"timer.start", "timer.pause", "timer.resume", "timer.cancel", "watch.start", "watch.stop", "watch.reset",
+                "pomo.start", "pomo.pause", "pomo.resume", "pomo.skip", "pomo.stop", "breathe.start", "dice.roll",
+                "coin.flip", "clock.show", "tool.close"}
+
+
+def api_tool(data):
+    """Run a tool on the phone from the dashboard (the phone does the timing, shows it and rings)."""
+    if data.get("action") not in TOOL_ACTIONS:
+        raise ValueError("Unknown tool action")
+    if not phones:
+        raise ValueError("Your phone isn't connected right now")
+    # A short queue (not a single slot), so two quick clicks both reach the phone.
+    queue = stats["cmd"] or []
+    n = queue[-1]["n"] + 1 if queue else 1
+    stats["cmd"] = (queue + [{"n": n, "action": data["action"], "minutes": int(data.get("minutes") or 0),
+                              "show": bool(data.get("show", True))}])[-10:]
+    return "Sent to your phone"
+
+
+def api_insights():
+    return {"summary": tracker.summary(), "now": stats["activity"], "learned": learner.rules(),
+            "categories": {k: v for k, v in brain.INFO.items()}, "productive": sorted(brain.PRODUCTIVE)}
 
 
 def api_state():
@@ -958,6 +1149,7 @@ def api_uninstall(_data):
 API = {
     "prefs": lambda d: (update_prefs(d), "Saved")[1], "buddy": api_buddy, "accounts": api_accounts,
     "startup": api_startup, "test-sound": api_test_sound, "onboarded": api_onboarded, "uninstall": api_uninstall,
+    "media": api_media, "tool": api_tool,
 }
 
 
@@ -1012,6 +1204,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_body("application/json", json.dumps(status).encode(), cache=False)
         elif path == "/api/state" and local:
             self.send_body("application/json", json.dumps(api_state()).encode(), cache=False)
+        elif path == "/api/insights" and local:
+            self.send_body("application/json", json.dumps(api_insights()).encode(), cache=False)
         elif path == "/quit" and local:
             # Used by a newer DeskBuddy.exe to replace this one when updating.
             self.send_body("text/plain", b"bye")
@@ -1030,6 +1224,12 @@ class Handler(BaseHTTPRequestHandler):
             if kind in ("pet", "break"):
                 add_points(kind)
             self.send_body("application/json", json.dumps(buddy_info()).encode(), cache=False)
+        elif path == "/media-correct":   # "that's music / a movie / neither" from the phone
+            try:
+                result = {"ok": True, "message": teach_media(json.loads(body))}
+            except (ValueError, KeyError, AttributeError) as e:
+                result = {"ok": False, "message": str(e)}
+            self.send_body("application/json", json.dumps(result).encode(), cache=False)
         elif path == "/work-reset":   # tapped "I took a break" on the phone
             work_session["start"] = time.time()
             stats["work"] = 0
@@ -1037,8 +1237,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/phone-status":
             try:
                 data = json.loads(body)
-                phone_caps.update(secure=bool(data.get("secure")), motion=str(data.get("motion", "off"))[:12],
-                                  mic=str(data.get("mic", "off"))[:12], at=time.time())
+                if "tools" in data:   # the phone's running timers, for the dashboard's Tools page
+                    phone_tools.update(state=data["tools"] if isinstance(data["tools"], dict) else None, at=time.time())
+                else:
+                    phone_caps.update(secure=bool(data.get("secure")), motion=str(data.get("motion", "off"))[:12],
+                                      mic=str(data.get("mic", "off"))[:12], at=time.time())
             except (ValueError, AttributeError):
                 pass
             self.send_body("application/json", b"{}", cache=False)
@@ -1253,7 +1456,7 @@ def run_app(args):
         "/icon-192.png": ("image/png", png_bytes(robot_image(192))),
         "/icon-512.png": ("image/png", png_bytes(robot_image(512))),
     }
-    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, start_secure_server):
+    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, start_secure_server):
         threading.Thread(target=loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

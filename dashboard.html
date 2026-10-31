@@ -55,6 +55,21 @@
   .golink { font-size: 13px; color: var(--cyan); text-decoration: none; border: 1px solid rgba(90,240,255,.35); border-radius: 9px; padding: 5px 10px; white-space: nowrap; }
   .frow.off h3 { color: var(--muted); }
   .frow .sub-setting { grid-column: 2 / 4; display: flex; align-items: center; gap: 12px; font-size: 13.5px; color: var(--muted); }
+  .bigtime { font-size: 38px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--cyan); margin-top: 6px; }
+  .mchip { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 9px; padding: 5px 11px; }
+  .mchip.on { border-color: var(--cyan); color: var(--cyan); }
+  .btn:disabled, .mchip:disabled { opacity: .4; cursor: default; }
+  .timeline { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; margin-top: 12px; }
+  .timeline div { height: 46px; border-radius: 5px; background: #121c23; position: relative; }
+  .timeline div span { position: absolute; bottom: -18px; left: 0; font-size: 10px; color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 26px; font-size: 13px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .abar { display: grid; grid-template-columns: 150px 1fr 70px; gap: 10px; align-items: center; padding: 5px 0; font-size: 14px; }
+  .abar .track { height: 10px; border-radius: 5px; background: #121c23; overflow: hidden; }
+  .abar .track i { display: block; height: 100%; border-radius: 5px; }
+  .abar b { text-align: right; font-weight: 500; color: var(--muted); }
+  .rule { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .rule button { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 8px; padding: 3px 9px; }
   @media (max-width: 1100px) { .flayout { grid-template-columns: 1fr; } .fpreview { display: none; } }
   h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -.01em; }
   .sub { color: var(--muted); margin: 0 0 24px; }
@@ -167,6 +182,8 @@
     <a href="#home">🏠 Home</a>
     <a href="#buddy">🤖 Buddy</a>
     <a href="#features">🎛️ Features</a>
+    <a href="#tools">⏳ Tools</a>
+    <a href="#insights">📈 Insights</a>
     <a href="#sound">🔊 Sound</a>
     <a href="#phone">📱 Phone</a>
     <a href="#cheeky">😈 Cheeky mode</a>
@@ -186,6 +203,17 @@
       <div class="chip"><span>Friendship</span><b id="cLevel">—</b></div>
       <div class="chip"><span>Sound</span><b id="cSound">—</b></div>
       <div class="chip"><span>Mail &amp; calendar</span><b id="cAcct">—</b></div>
+    </div>
+    <div class="card" id="npCard" style="display:none">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>🎬 Now playing</h2><p class="muted" id="npText"></p></div>
+        <div class="row">
+          <button class="btn ghost" data-teach="music">🎵 It's music</button>
+          <button class="btn ghost" data-teach="movie">🍿 It's a movie</button>
+          <button class="btn ghost" data-teach="ignore">Neither</button>
+        </div>
+      </div>
+      <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="npScope"> <span id="npScopeText">Remember for everything from this channel</span></label>
     </div>
     <div class="grid2">
       <div class="card"><div class="preview"><iframe class="robot" title="Your buddy" allow="autoplay"></iframe></div>
@@ -244,6 +272,82 @@
         <div class="preview"><iframe class="robot" id="featRobot" title="Feature preview" allow="autoplay"></iframe></div>
         <p class="muted" style="text-align:center;margin:10px 0 0">Press ▶ on any feature to watch it here.</p>
       </aside>
+    </div>
+  </section>
+
+  <!-- TOOLS -->
+  <section class="page" id="p-tools">
+    <h1>Tools</h1>
+    <p class="sub">Start your buddy's tools from here. They run on the phone, which keeps time, shows it and rings.</p>
+    <div class="status" id="toolsNote" style="margin:0 0 14px"></div>
+    <label class="muted" style="display:flex;gap:8px;align-items:center;margin-bottom:16px"><input type="checkbox" id="toolShow" checked> Also show the tool on the phone's screen</label>
+    <div class="grid2">
+      <div class="card">
+        <h2>⏳ Timer</h2>
+        <div class="bigtime" id="tTimer">—</div>
+        <div class="row" id="tMinutes" style="margin:10px 0"></div>
+        <div class="row">
+          <button class="btn" data-act="timer.start">Start</button>
+          <button class="btn ghost" data-act="timer.pause">Pause</button>
+          <button class="btn ghost" data-act="timer.resume">Resume</button>
+          <button class="btn ghost" data-act="timer.cancel">Cancel</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>⏱️ Stopwatch</h2>
+        <div class="bigtime" id="tWatch">—</div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn" data-act="watch.start">Start</button>
+          <button class="btn ghost" data-act="watch.stop">Stop</button>
+          <button class="btn ghost" data-act="watch.reset">Reset</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>🍅 Focus</h2>
+        <div class="bigtime" id="tPomo">—</div>
+        <p class="muted" style="margin:4px 0 10px">25 minutes of focus, then a 5-minute break (15 every fourth round).</p>
+        <div class="row">
+          <button class="btn" data-act="pomo.start">Start</button>
+          <button class="btn ghost" data-act="pomo.pause">Pause</button>
+          <button class="btn ghost" data-act="pomo.resume">Resume</button>
+          <button class="btn ghost" data-act="pomo.skip">Skip ahead</button>
+          <button class="btn ghost" data-act="pomo.stop">Stop</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>✨ More</h2>
+        <div class="bigtime" id="tDice" style="font-size:22px">—</div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn ghost" data-act="breathe.start">🌬️ Breathe</button>
+          <button class="btn ghost" data-act="clock.show">🕐 Clock</button>
+          <button class="btn ghost" data-act="dice.roll">🎲 Roll dice</button>
+          <button class="btn ghost" data-act="coin.flip">🪙 Flip a coin</button>
+          <button class="btn ghost" data-act="tool.close">🙂 Back to buddy</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSIGHTS -->
+  <section class="page wide" id="p-insights">
+    <h1>Insights</h1>
+    <p class="sub">What your day looks like, learned from which kinds of apps you use. Only categories and times are kept, on this PC.</p>
+    <div class="chips">
+      <div class="chip"><span>Right now</span><b id="iNow">—</b></div>
+      <div class="chip"><span>Active today</span><b id="iActive">—</b></div>
+      <div class="chip"><span>Focused work</span><b id="iFocus">—</b></div>
+      <div class="chip"><span>Longest focus</span><b id="iLongest">—</b></div>
+    </div>
+    <div class="card"><h2>Today, hour by hour</h2><div class="timeline" id="iTimeline"></div><div class="legend" id="iLegend"></div></div>
+    <div class="grid2">
+      <div class="card"><h2>Today</h2><div id="iToday"></div></div>
+      <div class="card"><h2>This week</h2><p class="muted" id="iWeekAvg"></p><div id="iWeek"></div></div>
+    </div>
+    <div class="card"><h2>Your pattern</h2><div id="iPattern"></div></div>
+    <div class="card">
+      <h2>🎵🍿 Music or movie: what I've learned</h2>
+      <p class="muted">Correct it from the Home page, or by tapping 🎵/🍿 on the phone. Each correction also teaches it which title words mean music or movie, so it gets better at new titles too.</p>
+      <div id="iLearned"></div>
     </div>
   </section>
 
@@ -458,12 +562,25 @@ const FEATURES = [
     ['🥵', 'Feels your CPU', 'Turns orange and sweats when your PC is working hard.', { pref: 'stress', try: { mood: 'stressed' } }],
     ['🤫', 'Quiet in meetings', 'Goes soft blue and mutes itself in Zoom, Teams, Meet, Webex and Skype.', { pref: 'meeting', try: { mood: 'meeting' } }],
   ]],
+  ['⚡ Reacting to your PC', [
+    ['⌨️', 'Typing', 'Looks down at your keyboard with typing dots, faster when you type faster. The PC counts key presses only as a number, never which keys.', { pref: 'typing', try: { mood: 'typing' } }],
+    ['⏳', 'Loading', "When Windows shows the busy cursor, its eyes turn into spinners.", { pref: 'loading', try: { mood: 'loading' } }],
+    ['📡', 'Internet down', 'Worried and searching when the internet drops, and cheers when it\'s back.', { pref: 'offline', try: { mood: 'offline' } }],
+    ['🎮', 'Gaming', 'Fullscreen games get excited, screen-lit eyes.', { pref: 'gaming', try: { mood: 'gaming' } }],
+    ['🪫', 'Laptop battery', 'Asks you to plug in when your laptop is low, and loves the charger.', { pref: 'pcBattery' }],
+    ['📸', 'Copy and screenshots', 'A little clipboard when you copy, and a camera flash when you take a screenshot.', { pref: 'clipboard' }],
+    ['🙉', 'Mute and too loud', 'Notices when you mute, and squeezes its eyes shut at full volume.', { pref: 'volumeReact', try: { mood: 'loud' } }],
+  ]],
+  ['🧠 Learning about you', [
+    ['📈', 'Work patterns', 'Learns your usual hours and focus times, cheers long focus stretches, notices when you\'re jumping around, and sums up your day.', { pref: 'patterns', link: ['#insights', 'Insights'] }],
+    ['🎓', 'Music or movie: teach it', "Got it wrong? Correct it (here on Home, or tap 🎵/🍿 on the phone) and it learns that title, channel and the words that give it away.", { link: ['#insights', 'What it learned'] }],
+  ]],
   ['🤚 Touch and play', [
     ['🫶', 'Pet it', 'Slide a finger across it: sparkly eyes, a contented hum, and it leans into your finger.', { try: { mood: 'content' } }],
     ['👉', 'Poke it', 'It giggles, but poke too much and it sulks until you pet it to make up.', { try: { mood: 'grumpy' } }],
     ['🤔', 'Curious about your finger', 'Hold a finger still and it studies it.', { try: { mood: 'curious' } }],
     ['😆', 'Secret tickle spot', 'Somewhere low on the screen, in a new place every time.', {}],
-    ['⏳', 'Toolbox', 'Hold the screen for 2 seconds: timer (hourglass eyes), clock, stopwatch, focus sessions, breathing and dice.', { pref: 'toolbox', try: { tool: 'timer' } }],
+    ['⏳', 'Toolbox', 'Hold the screen for 2 seconds: timer (hourglass eyes), clock, stopwatch, focus sessions, breathing and dice. Or run them from the Tools page here.', { pref: 'toolbox', try: { tool: 'timer' }, link: ['#tools', 'Tools'] }],
   ]],
   ['📳 Phone sensors', [
     ['🌀', 'Shake, tilt, lay it down', 'Shake it and it gets dizzy, tilt it and its eyes roll like marbles, lay it flat and it relaxes. Needs the secure link.', { pref: 'sensors', try: { mood: 'relaxed' }, link: ['#phone', 'Set up'] }],
@@ -537,6 +654,66 @@ function toast(msg, err) {
 }
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
+// ---------- Tools: run the phone's timer, stopwatch, focus… from here ----------
+let timerMinutes = 5;
+const mmss = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+function renderTools() {
+  const t = S.tools, on = S.phones > 0;
+  $('#toolsNote').textContent = on ? (t ? '✓ Your phone is connected. Buttons act on it right away.' : '✓ Phone connected. Waiting for it to report in…')
+    : "Your phone isn't connected. Open Desk Buddy on it to use the tools.";
+  $('#toolsNote').className = 'status' + (on ? ' ok' : '');
+  $('#tMinutes').innerHTML = [1, 3, 5, 10, 15, 25, 30, 45, 60].map(m => `<button class="mchip ${m === timerMinutes ? 'on' : ''}" data-min="${m}">${m} min</button>`).join('');
+  $$('[data-act]').forEach(b => b.disabled = !on);
+  if (!t) { ['#tTimer', '#tWatch', '#tPomo', '#tDice'].forEach(s => $(s).textContent = '—'); return; }
+  $('#tTimer').textContent = t.timer.ringing ? "⏰ Time's up!" : t.timer.running || t.timer.paused ? `${mmss(t.timer.left)}${t.timer.paused ? ' (paused)' : ''}` : `${timerMinutes}:00`;
+  $('#tWatch').textContent = `${mmss(t.watch.ms)}${t.watch.running ? '' : t.watch.ms ? ' (stopped)' : ''}`;
+  $('#tPomo').textContent = t.pomo.running || t.pomo.paused ? `${t.pomo.phase === 'focus' ? 'Focus' : 'Break'} ${mmss(t.pomo.left)}${t.pomo.paused ? ' (paused)' : ''}` : 'Not running';
+  $('#tDice').textContent = t.dice.rolling ? 'Rolling…' : t.dice.mode === 'coin' ? (t.dice.coin === 'heads' ? '★ Heads' : '☾ Tails') : `🎲 ${t.dice.faces[0]} + ${t.dice.faces[1]} = ${t.dice.faces[0] + t.dice.faces[1]}`;
+}
+
+// ---------- Insights: your day and your pattern ----------
+const ACT_COLORS = { coding: '#5af0ff', writing: '#7dff9b', reading: '#9bb8ff', sheets: '#ffd166', design: '#ff8fd0', email: '#ffb36b',
+                     meeting: '#b48cff', chat: '#4fd1a5', social: '#ff6b6b', video: '#f4a261', gaming: '#e76fff', music: '#80ffdb',
+                     browsing: '#8aa3ab', files: '#6c7a89', other: '#4a5a63' };
+const hhmm = m => m == null ? '—' : new Date(2000, 0, 1, Math.floor(m / 60), m % 60).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const dur = m => m >= 60 ? `${Math.floor(m / 60)} h ${m % 60 ? (m % 60) + ' min' : ''}` : `${m} min`;
+let insightsAt = 0;
+async function loadInsights() {
+  const I = await fetch('/api/insights').then(r => r.json()), s = I.summary, n = I.now;
+  insightsAt = Date.now();
+  $('#iNow').textContent = n ? `${n.emoji} ${n.label} · ${dur(Math.floor(n.minutes))}` : '—';
+  $('#iActive').textContent = dur(s.activeMin); $('#iFocus').textContent = dur(s.productiveMin); $('#iLongest').textContent = dur(s.longestFocusMin);
+  $('#iTimeline').innerHTML = s.timeline.map((h, i) => `<div title="${String(i).padStart(2, '0')}:00${h ? ` · mostly ${I.categories[h[0]][0]} · ${h[1]} min active` : ''}"
+    style="${h ? `background:${ACT_COLORS[h[0]] || '#4a5a63'};opacity:${.35 + .65 * Math.min(1, h[1] / 50)}` : ''}">${i % 3 === 0 ? `<span>${i}</span>` : ''}</div>`).join('');
+  const used = new Set(s.timeline.filter(Boolean).map(h => h[0]));
+  $('#iLegend').innerHTML = [...used].map(k => `<span><i style="background:${ACT_COLORS[k]}"></i>${I.categories[k][1]} ${I.categories[k][0]}</span>`).join('');
+  const bars = (rows, el) => {
+    const max = Math.max(1, ...rows.map(r => r[3]));
+    $(el).innerHTML = rows.length ? rows.map(([k, label, emoji, m]) => `<div class="abar"><span>${emoji} ${label}</span><div class="track"><i style="width:${m / max * 100}%;background:${ACT_COLORS[k]}"></i></div><b>${dur(m)}</b></div>`).join('')
+      : '<p class="muted">Nothing yet.</p>';
+  };
+  bars(s.breakdown, '#iToday'); bars(s.week, '#iWeek');
+  $('#iWeekAvg').textContent = `About ${dur(s.weekAvgMin)} active a day.`;
+  $('#iPattern').innerHTML = s.daysTracked < 3
+    ? `<p class="muted">I'm still learning your rhythm: ${s.daysTracked} day${s.daysTracked === 1 ? '' : 's'} so far. After 3 days I'll know your usual hours and best focus times.</p>`
+    : `<div class="abar"><span>Usually start</span><span>${hhmm(s.usualStart)}</span><b></b></div><div class="abar"><span>Usually finish</span><span>${hhmm(s.usualEnd)}</span><b></b></div>
+       <div class="abar"><span>Most focused hours</span><span>${s.bestHours.length ? s.bestHours.map(h => hhmm(h * 60)).join(', ') : '—'}</span><b></b></div>
+       <div class="abar"><span>Today you started</span><span>${hhmm(s.first)}</span><b></b></div>`;
+  const L = I.learned, kindName = { music: '🎵 music', movie: '🍿 movie', ignore: '🚫 neither' };
+  const rule = (type, [key, kind]) => `<div class="rule"><span>${type === 'source' ? 'Everything from' : 'Title'} <b>${key.replace(/</g, '&lt;')}</b> → ${kindName[kind]}</span><button data-forget="${type}" data-key="${encodeURIComponent(key)}">Forget</button></div>`;
+  $('#iLearned').innerHTML = (L.sources.length + L.titles.length)
+    ? L.sources.map(r => rule('source', r)).join('') + L.titles.map(r => rule('title', r)).join('') + `<p class="muted" style="margin-top:10px">Also learned from ${L.words} title words.</p>`
+    : '<p class="muted">Nothing yet. It\'s using its own guesses.</p>';
+}
+function renderNowPlaying() {
+  const np = S.nowPlaying;
+  $('#npCard').style.display = np && np.title && np.playing ? '' : 'none';
+  if (!np || !np.title) return;
+  const why = { title: 'you told me about this one', source: 'you told me about this channel', words: 'learned from your corrections', guess: 'my guess' }[np.why] || 'my guess';
+  $('#npText').textContent = `${np.title}${np.source ? ` · ${np.source}` : ''}. I think it's ${{ music: 'music 🎵', movie: 'a movie 🍿', ignore: 'neither' }[np.kind] || 'not sure'} (${why}).`;
+  $('#npScopeText').textContent = np.source ? `Remember for everything from ${np.source}` : 'Remember for this title';
+}
+
 // ---------- the full features list ----------
 function renderFeatures() {
   const p = S.prefs, q = ($('#fSearch').value || '').toLowerCase();
@@ -606,6 +783,8 @@ function renderAll() {
 }
 function renderLive() {
   const on = S.phones > 0;
+  renderTools(); renderNowPlaying();
+  if (location.hash === '#insights' && Date.now() - insightsAt > 15000) loadInsights();
   $('#hello').textContent = `Hi! ${S.buddy.name} is ${on ? 'on your phone 👋' : 'waiting for your phone'}`;
   $('#sideDot').className = 'dot' + (on ? ' on' : '');
   $('#sideStatus').textContent = on ? 'Phone connected' : 'No phone connected';
@@ -632,6 +811,7 @@ function route() {
   $$('section.page').forEach(s => s.classList.toggle('on', s.id === 'p-' + page));
   $$('nav a').forEach(a => a.classList.toggle('on', a.hash === '#' + page));
   if (!$('section.page.on')) location.hash = '#home';
+  if (page === 'insights') loadInsights();
 }
 addEventListener('hashchange', route);
 
@@ -674,6 +854,11 @@ document.addEventListener('click', async e => {
     robot.postMessage(msg, '*');
   }
   if (test) api('test-sound', { where: test.dataset.test });
+  const act = e.target.closest('[data-act]'), min = e.target.closest('[data-min]'), teachB = e.target.closest('[data-teach]'), forget = e.target.closest('[data-forget]');
+  if (min) { timerMinutes = +min.dataset.min; renderTools(); }
+  if (act && !act.disabled) await api('tool', { action: act.dataset.act, minutes: timerMinutes, show: $('#toolShow').checked });
+  if (teachB) { await api('media', { kind: teachB.dataset.teach, scope: $('#npScope').checked ? 'source' : 'title' }); $('#npScope').checked = false; }
+  if (forget) { await api('media', { forget: forget.dataset.forget, key: decodeURIComponent(forget.dataset.key) }); loadInsights(); }
   const ch = e.target.closest('[data-cheeky]');
   if (ch) { S.prefs.cheeky = +ch.dataset.cheeky; renderAll(); await api('prefs', { cheeky: S.prefs.cheeky }); }
   const v = e.target.closest('[data-voice]');
