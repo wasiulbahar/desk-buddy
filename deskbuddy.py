@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -44,7 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import brain
 
 APP_NAME = "Desk Buddy"
-VERSION = "2.4.1"
+VERSION = "2.4.2"
 PORT = int(os.environ.get("DESKBUDDY_PORT", 8765))
 HTTPS_PORT = PORT + 1     # the secure link, needed for the phone's motion sensors and microphone
 FPS = 15                  # how often the phone gets cursor updates
@@ -66,6 +67,24 @@ KEY_FILE = os.path.join(DATA_DIR, "phone-link.key")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+ERROR_LOG = os.path.join(DATA_DIR, "error.log")
+
+
+def log_error(where, exc):
+    """Problems go to a small log in the settings folder (shown on the dashboard's About page)."""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        if os.path.exists(ERROR_LOG) and os.path.getsize(ERROR_LOG) > 200_000:
+            os.replace(ERROR_LOG, ERROR_LOG + ".old")
+        with open(ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {VERSION} {where} (args {sys.argv[1:]})\n")
+            f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    except Exception:
+        pass
+
+
+sys.excepthook = lambda t, e, tb: log_error("crash", e)
+threading.excepthook = lambda a: log_error(f"thread {a.thread.name if a.thread else '?'}", a.exc_value)
 shell32 = ctypes.windll.shell32
 kernel32.GetTickCount.restype = wintypes.DWORD
 kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
@@ -206,7 +225,7 @@ stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0,
          "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0, "backspaces": 0,
          "beat": None, "mediaKind": None, "activity": None, "day": None, "typing": 0, "busy": False, "online": True,
          "pcBattery": None, "clip": None, "volume": None, "fullscreen": False, "cmd": None, "profile": None,
-         "life": None, "heart": None, "catchup": None, "links": []}
+         "life": None, "heart": None, "catchup": None, "links": [], "pcs": None}
 
 
 # ---------- saved files, and the people who use this PC ----------
@@ -1044,6 +1063,7 @@ def stats_loop():
         screen["fullscreen"] = full
         stats["activity"], stats["fullscreen"] = tracker.now(now), full and key == "gaming"
         feel(now, idle < 60 or playing == "movie", key, media)
+        stats["pcs"] = pc_choices()
         if int(now) % 15 == 0 or stats["day"] is None:
             day = tracker.summary()
             stats["day"] = {k: day[k] for k in ("activeMin", "productiveMin", "breakdown", "first", "usualStart", "usualEnd",
@@ -1457,6 +1477,8 @@ def make_bundle():
     others = load_json(OTHERS_FILE, {})
     activity = {**others, PC_ID: {"name": PC_NAME, "at": time.time(), "days": tracker.recent(14)}}
     return {"v": 1, "pc": PC_ID, "pcName": PC_NAME, "at": time.time(), "activeAt": last_here["at"],
+            "addrs": own_addresses(), "port": PORT,
+            "pin": pin(), "pinAt": (config.get("sync") or {}).get("pinAt", 0),
             "buddy": b, "learned": learner.data(), "activity": activity}
 
 
@@ -1496,6 +1518,8 @@ def merge_bundle(r):
             heart.adopt(rb["heart"])   # you were over there more recently: it brings its feelings along
         buddy["heart"] = heart.save()
         save_json(BUDDY_FILE, buddy)
+    if (r.get("pinAt") or 0) > (config.get("sync") or {}).get("pinAt", 0):   # which PC the phone shows, chosen over there
+        set_pin(r.get("pin") or "", r["pinAt"], tell_others=False)
     learner.merge(r.get("learned"))
     others = load_json(OTHERS_FILE, {})
     for pc, entry in (r.get("activity") or {}).items():
@@ -1536,6 +1560,10 @@ def folder_sync(key, group):
                 with open(os.path.join(folder, name), encoding="utf-8") as f:
                     r = unseal(f.read(), key)
                 merge_bundle(r)
+                k = known_peers().setdefault(r["pc"], {"name": r.get("pcName", "?"), "port": r.get("port", PORT)})
+                if k.get("ips") != r.get("addrs"):   # its addresses, to check in directly when you're on the same network
+                    k["ips"] = [ip for ip in r.get("addrs") or [] if isinstance(ip, str)][:6]
+                    save_json(CONFIG_FILE, config)
                 sync_state["folderPeers"][r["pc"]] = {"name": r.get("pcName", "?"), "at": r.get("at", 0)}
             except Exception:
                 continue   # half-downloaded, or from an old code
@@ -1564,8 +1592,10 @@ def sync_with_peer(peer):
     try:
         req = urllib.request.Request(f"http://{peer['ip']}:{peer['port']}/sync", data=seal(make_bundle(), key).encode(), method="POST")
         with urllib.request.urlopen(req, timeout=15) as r:
-            merge_bundle(unseal(r.read().decode(), key))
+            back = unseal(r.read().decode(), key)
+        merge_bundle(back)
         peer["synced"] = time.time()
+        note_peer(back.get("pc"), peer["ip"], back.get("port"), back.get("pcName"), back.get("activeAt"))
     except Exception:
         pass
 
@@ -1603,11 +1633,7 @@ def lan_sync_loop():
             continue
         if not on or msg.get("app") != "deskbuddy" or msg.get("g") != group or msg.get("pc") == PC_ID or blocked_client(ip):
             continue
-        peer = sync_state["peers"].setdefault(msg["pc"], {"synced": 0})
-        peer.update(name=str(msg.get("name", "?"))[:40], ip=ip, port=int(msg.get("port", PORT)), active=float(msg.get("active", 0)), seen=now)
-        if now - peer["synced"] > 60:
-            peer["synced"] = now
-            threading.Thread(target=sync_with_peer, args=(peer,), daemon=True).start()
+        note_peer(msg["pc"], ip, msg.get("port"), msg.get("name"), msg.get("active"))
 
 
 # ---------- the phone follows you to your other PC (it stays connected here; this PC relays) ----------
@@ -1618,14 +1644,104 @@ def lan_sync_loop():
 relay = {"peer": None, "msg": None, "at": 0.0, "gen": 0}
 hello_now = threading.Event()   # you just came back to this PC: tell the others right away
 
+# ---------- finding your other PCs, and which one the phone shows ----------
+# Many Wi-Fi routers block broadcasts between devices, so PCs don't rely on them alone: once two PCs
+# have met (a broadcast, a direct sync, or the shared folder), each remembers the other's address and
+# checks in directly every few seconds.
+
+def known_peers():
+    return (config.get("sync") or {}).setdefault("known", {})
+
+
+def note_peer(pc, ip, port, name, active=None):
+    if not pc or pc == PC_ID or not ip:
+        return None
+    now = time.time()
+    peer = sync_state["peers"].setdefault(pc, {"synced": 0})
+    peer.update(name=str(name or "?")[:40], ip=ip, port=int(port or PORT), seen=now)
+    if active:
+        peer["active"] = max(peer.get("active", 0), float(active))
+    known = known_peers()
+    if known.get(pc, {}).get("ip") != ip or known[pc].get("name") != peer["name"]:
+        known[pc] = {"ip": ip, "port": peer["port"], "name": peer["name"], "ips": known.get(pc, {}).get("ips", [])}
+        save_json(CONFIG_FILE, config)
+    if now - peer["synced"] > 60:
+        peer["synced"] = now
+        threading.Thread(target=sync_with_peer, args=(peer,), daemon=True).start()
+    return peer
+
+
+def own_addresses():
+    return [l["ip"] for l in links if not l["public"]] or [lan_ip()]
+
+
+def peer_poll_loop():
+    """Checks in with each PC you've synced with, every few seconds: is it on, and when was it last used?"""
+    while True:
+        key, group = sync_keys()
+        if key:
+            for pc, k in list(known_peers().items()):
+                for ip in dict.fromkeys([k.get("ip")] + k.get("ips", [])):
+                    if not ip:
+                        continue
+                    try:
+                        with urllib.request.urlopen(f"http://{ip}:{k.get('port', PORT)}/hello?g={group}", timeout=2) as r:
+                            h = json.loads(r.read())
+                        if h.get("pc") == pc:
+                            note_peer(pc, ip, h.get("port"), h.get("name"), h.get("active"))
+                            break
+                    except Exception:
+                        continue
+        time.sleep(4)
+
+
+def pin():
+    """Which PC the phone shows: "" = the one you're using (automatic), or a PC's id."""
+    return (config.get("sync") or {}).get("pin", "")
+
+
+def set_pin(value, at=None, tell_others=True):
+    s = config.setdefault("sync", {})
+    s.update(pin=value or "", pinAt=at or time.time())
+    save_json(CONFIG_FILE, config)
+    if tell_others:
+        key, _ = sync_keys()
+        body = seal({"pin": s["pin"], "at": s["pinAt"]}, key).encode() if key else None
+        def tell(p):
+            try:
+                urllib.request.urlopen(urllib.request.Request(f"http://{p['ip']}:{p['port']}/pin", data=body, method="POST"), timeout=3).read()
+            except Exception:
+                pass   # it's off; it'll hear about it next time they sync
+
+        for p in list(sync_state["peers"].values()) if body else []:
+            threading.Thread(target=tell, args=(p,), daemon=True).start()
+
+
+def pc_choices():
+    """For the phone and the dashboard: your PCs, which one the phone shows, and whether it's chosen by hand."""
+    key, _ = sync_keys()
+    if not key or not known_peers():
+        return None
+    now = time.time()
+    showing = relay["peer"]["name"] if relayed() else PC_NAME
+    pcs = [{"id": PC_ID, "name": PC_NAME, "here": True, "ok": True}]
+    pcs += [{"id": pc, "name": k.get("name", "?"), "here": False,
+             "ok": now - sync_state["peers"].get(pc, {}).get("seen", 0) < 15} for pc, k in known_peers().items()]
+    return {"list": pcs, "pin": pin(), "showing": showing}
+
 
 def follow_target(now):
-    s = config.get("sync") or {}
-    if not sync_state["key"] or not s.get("follow", True) or stats["idle"] < 3:
-        return None   # pinned here, not syncing, or you're using this PC
+    if not sync_state["key"]:
+        return None
+    chosen = pin()
+    if chosen:   # you picked a PC: show that one whatever you're doing (if it's on)
+        p = sync_state["peers"].get(chosen)
+        return p if p and now - p.get("seen", 0) < 15 and now - p.get("failAt", 0) > 10 else None
+    if stats["idle"] < 3:
+        return None   # you're using this PC
     best, best_act = None, last_here["at"] + 2
     for p in list(sync_state["peers"].values()):
-        if now - p.get("seen", 0) > 60 or now - p.get("failAt", 0) < 60:
+        if now - p.get("seen", 0) > 15 or now - p.get("failAt", 0) < 30:
             continue
         act = p.get("active", 0)
         if p is relay["peer"] and relay["msg"] and now - relay["at"] < 5:
@@ -1648,7 +1764,7 @@ def relay_reader(peer, gen):
                     relay["msg"], relay["at"] = json.loads(line[6:]), time.time()
     except Exception:
         pass
-    if relay["gen"] == gen:   # couldn't reach it: stay here for a minute
+    if relay["gen"] == gen:   # couldn't reach it: stay here for a bit
         peer["failAt"] = time.time()
         relay.update(peer=None, msg=None, gen=gen + 1)
 
@@ -1675,7 +1791,7 @@ def sync_status():
     peers = [{"name": p["name"], "via": "same network", "ago": round(now - p.get("synced", 0)) if p.get("synced") else None}
              for p in sync_state["peers"].values() if now - p.get("seen", 0) < 120]
     peers += [{"name": p["name"], "via": "synced folder", "ago": round(now - p["at"])} for p in sync_state["folderPeers"].values()]
-    return {"on": bool(key), "lan": s.get("lan", True), "follow": s.get("follow", True), "folder": s.get("folder", ""), "peers": peers, "error": sync_state["error"],
+    return {"on": bool(key), "lan": s.get("lan", True), "pcs": pc_choices(), "folder": s.get("folder", ""), "peers": peers, "error": sync_state["error"],
             "following": relay["peer"]["name"] if relayed() else None,
             "folderAt": sync_state["folderAt"], "pcName": PC_NAME}
 
@@ -1700,9 +1816,13 @@ def api_sync(data):
     elif action == "lan":
         s["lan"] = bool(data.get("on"))
         msg = "Saved"
-    elif action == "follow":
-        s["follow"] = bool(data.get("on"))
-        msg = "The phone follows you to your other PCs" if s["follow"] else "The phone stays with this PC"
+    elif action == "pin":
+        choice = str(data.get("pin", ""))
+        if choice not in ("", PC_ID) and choice not in known_peers():
+            raise ValueError("That PC isn't one of yours")
+        set_pin(choice)
+        return ("The phone follows you to whichever PC you're using" if not choice else
+                "The phone now shows this PC" if choice == PC_ID else f"The phone now shows {known_peers()[choice].get('name', 'that PC')}")
     elif action == "stop":
         config["sync"] = {}
         sync_state.update(peers={}, folderPeers={})
@@ -1855,6 +1975,7 @@ def api_state():
         "calendarSaved": bool(config["calendar_url"]), "startup": os.path.exists(STARTUP_LNK),
         "payday": config.get("payday", 0), "birthday": config.get("birthday", ""),
         "syncCode": sync_code_text(), "folders": synced_folders(),
+        "errorLog": open(ERROR_LOG, encoding="utf-8", errors="replace").read()[-4000:] if os.path.exists(ERROR_LOG) else "",
         "linkQr": {l["ip"]: qr_svg(f"http://{l['ip']}:{PORT}") for l in stats["links"]},
     }
 
@@ -2001,6 +2122,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(302)
             self.send_header("Location", "/app#" + ("phone" if path == "/pair" else "accounts"))
             self.end_headers()
+        elif path == "/hello":   # another of your PCs checking in (same sync code only)
+            key, group = sync_keys()
+            if not key or urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("g", [""])[0] != group:
+                return self.send_error(404)
+            self.send_body("application/json", json.dumps({"pc": PC_ID, "name": PC_NAME, "port": PORT, "active": last_here["at"]}).encode(), cache=False)
         elif path == "/status":
             status = live_status() if local else {"phones": phones}
             self.send_body("application/json", json.dumps(status).encode(), cache=False)
@@ -2028,10 +2154,29 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/sync":   # another of your PCs, with the same sync code
             key, _ = sync_keys()
             try:
-                merge_bundle(unseal(body, key))
+                r = unseal(body, key)
             except Exception:
                 return self.send_error(403)
+            merge_bundle(r)
+            note_peer(r.get("pc"), self.client_address[0], r.get("port"), r.get("pcName"), r.get("activeAt"))
             self.send_body("text/plain", seal(make_bundle(), key).encode(), cache=False)
+        elif path == "/pin":   # you chose on another of your PCs which one the phone shows
+            key, _ = sync_keys()
+            try:
+                p = unseal(body, key)
+            except Exception:
+                return self.send_error(403)
+            if p.get("at", 0) > (config.get("sync") or {}).get("pinAt", 0):
+                set_pin(p.get("pin", ""), p["at"], tell_others=False)
+            self.send_body("application/json", b"{}", cache=False)
+        elif path == "/follow":   # chosen on the phone
+            try:
+                choice = str(json.loads(body).get("pin", ""))
+            except (ValueError, AttributeError):
+                choice = None
+            if choice is not None and (choice in ("", PC_ID) or choice in known_peers()):
+                set_pin(choice)
+            self.send_body("application/json", json.dumps({"ok": choice is not None}).encode(), cache=False)
         elif path == "/bond":
             # The phone reports petting and breaks taken; the PC keeps the friendship score.
             kind, ok = body.strip()[:20], True
@@ -2099,7 +2244,7 @@ class Handler(BaseHTTPRequestHandler):
             while True:
                 other = None if from_peer else relayed()
                 if other:   # you're on your other PC: show the phone that one
-                    msg = dict(other, via=relay["peer"]["name"], links=stats["links"], profile=stats["profile"])
+                    msg = dict(other, via=relay["peer"]["name"], links=stats["links"], profile=stats["profile"], pcs=stats["pcs"])
                 else:
                     x, y = cursor_position()
                     msg = dict(stats, x=round(x, 3), y=round(y, 3), now=int(time.time() * 1000), via=None)   # "now": lets the phone line up with the beat
@@ -2227,17 +2372,37 @@ def register_in_apps_list():
         winreg.SetValueEx(k, "NoRepair", 0, winreg.REG_DWORD, 1)
 
 
+def running_copies():
+    """The installed Desk Buddy, if it's running (never this process or the launcher that started it)."""
+    import psutil
+    me, found = {os.getpid(), os.getppid()}, []
+    for p in psutil.process_iter(["pid", "exe"]):
+        try:
+            if p.info["pid"] not in me and p.info["exe"] and os.path.normcase(p.info["exe"]) == os.path.normcase(INSTALLED_EXE):
+                found.append(p)
+        except Exception:
+            continue
+    return found
+
+
 def stop_running_copy():
-    if not port_in_use():
-        return
-    try:
-        urllib.request.urlopen(f"http://127.0.0.1:{PORT}/quit", timeout=3).read()
-    except Exception:
-        pass
-    for _ in range(50):
-        if not port_in_use():
-            break
-        time.sleep(0.1)
+    """Ask the running Desk Buddy to quit; if it doesn't within 10 seconds, stop it."""
+    import psutil
+    if port_in_use():
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{PORT}/quit", timeout=3).read()
+        except Exception:
+            pass
+    deadline = time.time() + 10
+    while time.time() < deadline and (port_in_use() or running_copies()):
+        time.sleep(0.2)
+    left = running_copies()
+    for p in left:
+        try:
+            p.kill()
+        except Exception:
+            pass
+    psutil.wait_procs(left, timeout=5)
     time.sleep(0.5)  # give Windows a moment to release the .exe file
 
 
@@ -2251,14 +2416,26 @@ def launch_detached(args):
 
 
 def install():
+    try:
+        _install()
+    except Exception as e:
+        log_error("install", e)
+        user32.MessageBoxW(None, f"Desk Buddy couldn't finish installing:\n{e}\n\nPlease double-click DeskBuddy.exe again.", APP_NAME, 0x30)
+
+
+def _install():
     stop_running_copy()
     os.makedirs(INSTALL_DIR, exist_ok=True)
-    for attempt in range(10):
+    fresh = INSTALLED_EXE + ".new"
+    shutil.copy2(sys.executable, fresh)
+    for attempt in range(40):   # Windows (or antivirus) can hold on to the old file for a few seconds
         try:
-            shutil.copy2(sys.executable, INSTALLED_EXE)
+            os.replace(fresh, INSTALLED_EXE)
             break
         except PermissionError:
             time.sleep(0.5)
+    else:
+        raise RuntimeError("the old Desk Buddy is still running. Right-click the robot by the clock, choose Quit, and try again.")
     make_shortcut(STARTUP_LNK, INSTALLED_EXE, "--startup")   # quietly in the tray at every login
     make_shortcut(START_MENU_LNK, INSTALLED_EXE, "--open")   # these open the dashboard
     make_shortcut(desktop_lnk(), INSTALLED_EXE, "--open")
@@ -2276,12 +2453,26 @@ def uninstall():
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY)
     except OSError:
         pass
-    run_as_admin("netsh", f"advfirewall firewall delete rule name={FIREWALL_RULE}")
-    shutil.rmtree(DATA_DIR, ignore_errors=True)   # settings, saved passwords and friendship progress
+    run_as_admin("cmd.exe", f"/c netsh advfirewall firewall delete rule name={FIREWALL_RULE} & "
+                            f"netsh advfirewall firewall delete rule name={FIREWALL_RULE}Cable & "
+                            f"netsh advfirewall firewall delete rule name={FIREWALL_RULE}Sync")
+    for _ in range(10):   # settings, saved passwords and friendship progress
+        shutil.rmtree(DATA_DIR, ignore_errors=True)
+        if not os.path.exists(DATA_DIR):
+            break
+        time.sleep(0.5)
+    # This .exe can't delete itself while running, so a hidden helper waits for it to exit, then removes the folder.
+    pids = ",".join(str(p) for p in {os.getpid(), os.getppid()})
+    folder = INSTALL_DIR.replace("'", "''")
+    ps = (f"Wait-Process -Id {pids} -Timeout 120 -ErrorAction SilentlyContinue; Start-Sleep 1; "
+          f"foreach ($i in 1..15) {{ Remove-Item -LiteralPath '{folder}' -Recurse -Force -ErrorAction SilentlyContinue; "
+          f"if (-not (Test-Path -LiteralPath '{folder}')) {{ break }}; Start-Sleep 1 }}")
+    helper = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps]
+    try:   # break away from whatever started us, so the helper outlives it
+        subprocess.Popen(helper, cwd=os.environ.get("TEMP", "C:\\"), creationflags=NO_WINDOW | 0x00000200 | 0x01000000)
+    except OSError:
+        subprocess.Popen(helper, cwd=os.environ.get("TEMP", "C:\\"), creationflags=NO_WINDOW | 0x00000200)
     user32.MessageBoxW(None, "Desk Buddy has been removed. Bye! 👋", APP_NAME, 0x40)
-    # This .exe can't delete itself while running, so a hidden helper removes the folder once it exits.
-    subprocess.Popen(f'cmd /c ping 127.0.0.1 -n 4 >nul & rmdir /s /q "{INSTALL_DIR}"',
-                     cwd=os.environ.get("TEMP", "C:\\"), creationflags=NO_WINDOW)
 
 
 # ---------- the running app ----------
@@ -2326,10 +2517,20 @@ def run_app(args):
         "/icon-192.png": ("image/png", png_bytes(robot_image(192))),
         "/icon-512.png": ("image/png", png_bytes(robot_image(512))),
     }
-    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, life_loop, links_loop, sync_loop, lan_sync_loop, relay_loop, start_secure_server):
+    for attempt in range(30):   # just updated: the old copy may still be letting go of the port
+        try:
+            server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+            break
+        except OSError:
+            time.sleep(0.5)
+    else:
+        if port_in_use():
+            open_dashboard()   # another Desk Buddy got there first
+        return
+    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, life_loop,
+                 links_loop, sync_loop, lan_sync_loop, peer_poll_loop, relay_loop, start_secure_server):
         threading.Thread(target=loop, daemon=True).start()
     start_mini_buddy()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     # At login it starts quietly; the dashboard only opens when asked (or until setup is finished).
     if "--startup" not in args or not config["onboarded"]:
@@ -2349,6 +2550,8 @@ def run_app(args):
     tray = pystray.Icon("DeskBuddy", robot_image(64, eye_scale=1.5), APP_NAME, pystray.Menu(
         item("Open Desk Buddy", lambda: open_dashboard(), default=True),
         item("Connect a phone", lambda: open_dashboard("phone")),
+        item("Show the phone this PC", lambda: set_pin(PC_ID), checked=lambda i: pin() == PC_ID, visible=lambda i: bool(pc_choices())),
+        item("Phone follows me", lambda: set_pin(""), checked=lambda i: pin() == "", visible=lambda i: bool(pc_choices())),
         pystray.Menu.SEPARATOR,
         item("Quit", lambda: quit_app()),
     ))

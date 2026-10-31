@@ -89,6 +89,7 @@
   <span id="next" data-sheet="calendar"></span>
   <span id="batt" data-sheet="battery"></span>
   <span id="bond" data-sheet="buddy" title="Your buddy"></span>
+  <span id="pcchip" data-sheet="pcs" title="Which PC"></span>
   <span id="running" data-sheet="running"></span>
   <span id="doing" data-sheet="activity"></span>
   <span id="playing" data-sheet="media"></span>
@@ -2656,6 +2657,14 @@ function openSheet(kind) {
     else body += '<p class="muted">Change its name, gender and personality in the Desk Buddy app on your PC.</p>';
     add('Play ball 🎾', () => startBall(), true);
     add('Snack 🍪', () => giveTreat('cookie')); add('Ice cream 🍦', () => giveTreat('icecream')); add('Battery 🔋', () => giveTreat('battery'));
+  } else if (kind === 'pcs') {   // which of your PCs it shows
+    const c = state.pcs, choose = pin => () => fetch(PC('follow'), { method: 'POST', body: JSON.stringify({ pin }) })
+      .then(() => say(pin ? `Showing ${esc((c.list.find(p => p.id === pin) || {}).name || 'that PC')} 💻` : 'Following you around 👀', 2200, 'happy')).catch(() => {});
+    title = `💻 Showing ${esc(c.showing)}`;
+    body = c.list.map(p => row(`${p.here ? '📱 ' : ''}${esc(p.name)}`, !p.ok ? 'off or out of reach' : c.pin === p.id ? 'chosen ✓' : p.name === c.showing ? 'showing now' : '')).join('')
+      + `<p class="muted">${c.pin ? 'You picked a PC, so it stays on that one.' : "It follows you to whichever PC you're using."}</p>`;
+    add('Follow me automatically', choose(''), !c.pin);
+    c.list.filter(p => p.ok && p.id !== c.pin).forEach(p => add(`Show ${p.name}`, choose(p.id)));
   } else if (kind === 'running') {
     title = '⏳ Running now';
     if (t.end || t.pausedLeft) {
@@ -2699,6 +2708,7 @@ $('hud').addEventListener('pointerdown', e => {
   e.stopPropagation();
   if (item.dataset.sheet === 'battery' && !battery) return;
   if (item.dataset.sheet === 'buddy' && !state.buddy) return;
+  if (item.dataset.sheet === 'pcs' && !state.pcs) return;
   if (item.dataset.sheet === 'activity' && !(state.activity && state.day)) return;
   openSheet(item.dataset.sheet); sfx.chirp();
 });
@@ -2712,6 +2722,7 @@ setInterval(() => {
   $('mailc').textContent = state.mail ? `✉ ${state.mail.unread}` : '';
   const next = state.calendar && state.calendar.events.find(e => e.start * 1000 > Date.now());
   $('next').textContent = next ? `📅 ${new Date(next.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+  $('pcchip').textContent = state.pcs ? `💻 ${state.pcs.showing}${state.pcs.pin ? ' 📌' : ''}` : '';
   $('bond').textContent = state.buddy ? `${FEEL_ICON[(P('needs') && state.heart && state.heart.feeling) || 'okay']} Lv${state.buddy.level}` : '';
   const t = kit.timer, p = kit.pomo, running = [];   // tools still ticking in the background
   if (t.end || t.pausedLeft) running.push(`⏳ ${mmss(timerLeft())}`);
