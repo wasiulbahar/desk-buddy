@@ -38,7 +38,7 @@ from email.utils import parseaddr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "Desk Buddy"
-VERSION = "2.0"
+VERSION = "2.1"
 PORT = int(os.environ.get("DESKBUDDY_PORT", 8765))
 HTTPS_PORT = PORT + 1     # the secure link, needed for the phone's motion sensors and microphone
 FPS = 15                  # how often the phone gets cursor updates
@@ -134,7 +134,8 @@ def cursor_position():
 
 
 stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0,
-         "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0, "backspaces": 0}
+         "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0, "backspaces": 0,
+         "beat": None}
 
 
 # ---------- saved files: settings (secrets encrypted by Windows) and friendship ----------
@@ -190,6 +191,7 @@ DEFAULT_PREFS = {
     "music": True, "reading": True, "meeting": True, "suspicious": True, "stress": True, "quirks": True,
     "breaks": True, "breakMinutes": 50, "bedtime": True, "mailAlerts": True, "calendarAlerts": True,
     "soundOutput": "phone", "volume": 80, "cheeky": 0, "sensors": True, "mic": True,
+    "movie": True, "greetings": True, "spin": True, "toolbox": True, "babble": True,
 }
 PREF_CHOICES = {"soundOutput": ("phone", "pc", "both", "off")}
 PREF_RANGES = {"breakMinutes": (10, 180), "volume": (0, 100), "cheeky": (0, 3)}
@@ -218,15 +220,20 @@ wake_mail, wake_calendar = threading.Event(), threading.Event()
 # Friendship: points come from days together, time at the PC, petting and taking breaks.
 PERSONALITIES = {"cheerful": "Cheerful 😊", "shy": "Shy 😳", "hyper": "Hyper ⚡",
                  "sleepy": "Sleepy 😴", "grumpy": "Grumpy-but-sweet 😤"}
-NAMES = ["Pip", "Mochi", "Bolt", "Nori", "Biscuit", "Pixel", "Sprout", "Tofu", "Bean", "Zuzu", "Momo", "Blip"]
+GENDERS = {"boy": "Boy 👦", "girl": "Girl 👧", "neutral": "Just a robot 🤖"}
+NAMES = {"boy": ["Bolt", "Pip", "Biscuit", "Pixel", "Bean", "Blip", "Rusty", "Ziggy"],
+         "girl": ["Mochi", "Nori", "Zuzu", "Momo", "Luna", "Pixie", "Daisy", "Kiki"],
+         "neutral": ["Sprout", "Tofu", "Beep", "Nova", "Orbit", "Sunny"]}
 LEVELS = [0, 40, 120, 260, 480]          # points needed for friendship levels 1-5
 POINTS = {"day": 10, "time": 1, "pet": 1, "break": 5}
 DAILY_CAP = {"time": 30, "pet": 15, "break": 15}
 buddy = load_json(BUDDY_FILE, {})
 if buddy.get("personality") not in PERSONALITIES:   # first run: a brand-new buddy is born
-    buddy = {"name": random.choice(NAMES), "personality": random.choice(list(PERSONALITIES)), "points": 0,
-             "met": datetime.date.today().isoformat(), "lastDay": "", "awayDays": 0, "todayDate": "", "today": {}}
+    _gender = random.choice(list(GENDERS))
+    buddy = {"name": random.choice(NAMES[_gender]), "gender": _gender, "personality": random.choice(list(PERSONALITIES)),
+             "points": 0, "met": datetime.date.today().isoformat(), "lastDay": "", "awayDays": 0, "todayDate": "", "today": {}}
     save_json(BUDDY_FILE, buddy)
+buddy.setdefault("gender", "neutral")   # buddies born before genders existed
 bond_lock = threading.Lock()
 stats["prefs"] = dict(prefs)
 
@@ -258,7 +265,7 @@ def buddy_info():
     level = sum(pts >= t for t in LEVELS)
     nxt = LEVELS[level] if level < len(LEVELS) else None
     return {
-        "name": buddy["name"], "personality": buddy["personality"], "level": level,
+        "name": buddy["name"], "personality": buddy["personality"], "gender": buddy["gender"], "level": level,
         "progress": round((pts - LEVELS[level - 1]) / (nxt - LEVELS[level - 1]), 3) if nxt else 1,
         "days": (datetime.date.today() - datetime.date.fromisoformat(buddy["met"])).days,
         "awayDays": buddy["awayDays"],
@@ -597,8 +604,61 @@ CHIRP = [   # "hi-hi!" in buddy-speak, for the dashboard's Test on PC button
 ]
 
 
+class BeatTracker:
+    """Finds the beat in the speaker level: spots sudden rises (onsets), works out the tempo from the
+    gaps between them, and keeps a steady beat grid locked onto them, so the phone can dance in time."""
+
+    def __init__(self):
+        self.prev = self.flux_avg = 0.0
+        self.onsets, self.last_onset, self.period, self.anchor = [], 0.0, 0.0, 0.0
+
+    def feed(self, level, now):
+        flux = max(0.0, level - self.prev)
+        self.prev = level
+        self.flux_avg = self.flux_avg * 0.97 + flux * 0.03
+        if flux > self.flux_avg * 3 + 0.02 and now - self.last_onset > 0.2:
+            self.last_onset = now
+            self.onsets = [t for t in self.onsets if now - t < 10] + [now]
+            self._tempo()
+            self._lock(now)
+        if now - self.last_onset > 4:
+            self.period = 0.0   # the music stopped
+
+    def _tempo(self):
+        if len(self.onsets) < 6:
+            return
+        gaps = [b - a for i, a in enumerate(self.onsets) for b in self.onsets[i + 1:i + 5]]
+        best, best_score = 0.0, 0.0
+        for bpm in range(70, 181, 2):   # try every tempo; the one that explains most gaps wins
+            p = 60 / bpm
+            score = 0.0
+            for g in gaps:
+                k = round(g / p)
+                if 1 <= k <= 4:
+                    score += max(0.0, 1 - abs(g - k * p) / (0.08 * k)) / k
+            score *= math.exp(-0.5 * ((bpm - 120) / 50) ** 2)   # most songs sit around 90-150 bpm
+            if score > best_score:
+                best, best_score = p, score
+        if best:
+            self.period = self.period * 0.7 + best * 0.3 if self.period and abs(best - self.period) < 0.1 else best
+
+    def _lock(self, now):
+        if not self.period:
+            self.anchor = now
+            return
+        k = round((now - self.anchor) / self.period)
+        err = now - (self.anchor + k * self.period)
+        if abs(err) < self.period * 0.3:
+            self.anchor += err * 0.3   # nudge the grid toward the beat we just heard
+        else:
+            self.anchor = now
+
+    def state(self):
+        return {"bpm": round(60 / self.period, 1), "t0": int(self.anchor * 1000)} if self.period else None
+
+
 def audio_loop():
-    """How loud the PC's speakers are right now (0..1), so the robot can dance to music."""
+    """How loud the PC's speakers are right now (0..1), and where the beat is, so the robot can dance."""
     try:
         import comtypes
         from comtypes import CLSCTX_ALL
@@ -610,20 +670,26 @@ def audio_loop():
                             ctypes.POINTER(IAudioMeterInformation))
     except Exception:
         return  # no speakers or pycaw missing: the robot just won't dance
-    level = 0.0
+    level, beats, tick = 0.0, BeatTracker(), 0
     while True:
         try:
-            # Fast attack, slow release, so beats show up as clear spikes.
-            level = max(meter.GetPeakValue(), level * 0.8)
+            peak = meter.GetPeakValue()
         except Exception:
-            level = 0.0
-        stats["audio"] = round(level, 3)
-        time.sleep(1 / 60)
+            peak = 0.0
+        level = max(peak, level * 0.8)   # fast attack, slow release, so beats show up as clear spikes
+        beats.feed(peak, time.time())
+        tick += 1
+        if tick % 2 == 0:
+            stats["audio"] = round(level, 3)
+            stats["beat"] = beats.state()
+        time.sleep(1 / 100)
+
+
+work_session = {"start": time.time()}   # the phone can reset this ("I just took a break")
 
 
 def stats_loop():
     prev = cpu_times()
-    session_start = time.time()
     active = 0
     while True:
         time.sleep(1)
@@ -633,7 +699,7 @@ def stats_loop():
         total = d_kern + d_user  # kernel time already includes idle time
         idle = idle_seconds()
         if idle > SESSION_RESET_IDLE:
-            session_start = time.time()
+            work_session["start"] = time.time()
         if idle < 60:   # you're here: that's time spent together
             note_active_day()
             active += 1
@@ -645,7 +711,7 @@ def stats_loop():
             ram=ram_percent(),
             idle=round(idle),
             title=active_window_title(),
-            work=round((time.time() - session_start) / 60, 1),
+            work=round((time.time() - work_session["start"]) / 60, 1),
         )
 
 
@@ -811,7 +877,7 @@ def api_state():
     url = phone_url()
     return {
         **live_status(), "version": VERSION, "installed": FROZEN, "onboarded": config["onboarded"],
-        "personalities": PERSONALITIES, "prefs": prefs, "phoneUrl": url, "qr": qr_svg(url),
+        "personalities": PERSONALITIES, "genders": GENDERS, "prefs": prefs, "phoneUrl": url, "qr": qr_svg(url),
         "secureUrl": secure_phone_url(), "secureQr": qr_svg(secure_phone_url()),
         "gmailUser": config["gmail_user"], "gmailSaved": bool(config["gmail_password"]),
         "calendarSaved": bool(config["calendar_url"]), "startup": os.path.exists(STARTUP_LNK),
@@ -823,6 +889,8 @@ def api_buddy(data):
         name = str(data.get("name", "")).strip()[:20]
         if name:
             buddy["name"] = name
+        if data.get("gender") in GENDERS:
+            buddy["gender"] = data["gender"]
         if data.get("personality") in PERSONALITIES:
             buddy["personality"] = data["personality"]
         if data.get("reset"):
@@ -962,6 +1030,10 @@ class Handler(BaseHTTPRequestHandler):
             if kind in ("pet", "break"):
                 add_points(kind)
             self.send_body("application/json", json.dumps(buddy_info()).encode(), cache=False)
+        elif path == "/work-reset":   # tapped "I took a break" on the phone
+            work_session["start"] = time.time()
+            stats["work"] = 0
+            self.send_body("application/json", b"{}", cache=False)
         elif path == "/phone-status":
             try:
                 data = json.loads(body)
@@ -1005,7 +1077,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             while True:
                 x, y = cursor_position()
-                msg = dict(stats, x=round(x, 3), y=round(y, 3))
+                msg = dict(stats, x=round(x, 3), y=round(y, 3), now=int(time.time() * 1000))   # "now": lets the phone line up with the beat
                 self.wfile.write(f"data: {json.dumps(msg)}\n\n".encode())
                 self.wfile.flush()
                 time.sleep(1 / FPS)

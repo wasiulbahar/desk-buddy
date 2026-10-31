@@ -37,6 +37,25 @@
   main { overflow-y: auto; padding: 32px 40px 60px; }
   section.page { display: none; max-width: 860px; }
   section.page.on { display: block; }
+  section.page.wide { max-width: 1180px; }
+  /* the full features list */
+  .flayout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+  .fpreview { position: sticky; top: 0; }
+  .fgroup { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 8px 20px 10px; margin-bottom: 14px; }
+  .fgroup > h2 { padding: 12px 0 4px; }
+  .frow { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+  .frow:first-of-type { border-top: 0; }
+  .frow .ic { font-size: 22px; text-align: center; }
+  .frow h3 { margin: 0; font-size: 15.5px; font-weight: 600; }
+  .frow p { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; }
+  .fctl { display: flex; align-items: center; gap: 10px; }
+  .try { border: 1px solid var(--line); background: var(--bg); color: var(--cyan); border-radius: 9px; padding: 5px 10px; font-size: 13px; }
+  .try:hover { border-color: var(--cyan); }
+  .chip-on { font-size: 12px; color: var(--muted); border: 1px dashed var(--line); border-radius: 9px; padding: 4px 9px; white-space: nowrap; }
+  .golink { font-size: 13px; color: var(--cyan); text-decoration: none; border: 1px solid rgba(90,240,255,.35); border-radius: 9px; padding: 5px 10px; white-space: nowrap; }
+  .frow.off h3 { color: var(--muted); }
+  .frow .sub-setting { grid-column: 2 / 4; display: flex; align-items: center; gap: 12px; font-size: 13.5px; color: var(--muted); }
+  @media (max-width: 1100px) { .flayout { grid-template-columns: 1fr; } .fpreview { display: none; } }
   h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -.01em; }
   .sub { color: var(--muted); margin: 0 0 24px; }
   h2 { font-size: 18px; margin: 0 0 4px; }
@@ -193,6 +212,11 @@
       <div class="row" style="margin-top:10px"><input type="text" id="name" maxlength="20" style="max-width:320px"><button class="btn" id="saveName">Save</button></div>
     </div>
     <div class="card">
+      <h2>Boy, girl or just a robot?</h2>
+      <p class="muted">Changes its voice and adds a little touch: eyelashes and a bow, or a pair of eyebrows.</p>
+      <div class="choices" id="genderChoices" style="margin-top:14px;grid-template-columns:repeat(3,1fr)"></div>
+    </div>
+    <div class="card">
       <h2>Personality</h2>
       <p class="muted">Every buddy is born with one. You can change it here; it changes how it reacts to everything.</p>
       <div class="choices five" id="persChoices" style="margin-top:14px"></div>
@@ -208,18 +232,19 @@
   </section>
 
   <!-- FEATURES -->
-  <section class="page" id="p-features">
-    <h1>Features</h1>
-    <p class="sub">Switch anything on or off. Changes reach your phone instantly.</p>
-    <div class="card"><h2>What it notices</h2><div id="fNotice"></div></div>
-    <div class="card"><h2>Looking after you</h2><div id="fCare"></div>
-      <div id="breakRow" style="padding:4px 0 0">
-        <p class="muted" style="margin:6px 0">Remind me after <span class="rangeval" id="breakVal">50</span> minutes of work</p>
-        <input type="range" id="breakMinutes" min="10" max="180" step="5">
+  <section class="page wide" id="p-features">
+    <h1>Every feature</h1>
+    <p class="sub" id="fSummary">Everything your buddy can do. Press ▶ to see it on the robot, and switch things on or off; changes reach your phone instantly.</p>
+    <div class="flayout">
+      <div>
+        <input type="text" id="fSearch" placeholder="🔍 Search features… (try “music”, “timer”, “sleep”)" style="margin-bottom:16px">
+        <div id="fList"></div>
       </div>
+      <aside class="fpreview">
+        <div class="preview"><iframe class="robot" id="featRobot" title="Feature preview" allow="autoplay"></iframe></div>
+        <p class="muted" style="text-align:center;margin:10px 0 0">Press ▶ on any feature to watch it here.</p>
+      </aside>
     </div>
-    <div class="card"><h2>Its own life</h2><div id="fLife"></div></div>
-    <div class="card"><h2>Alerts</h2><div id="fAlerts"></div></div>
   </section>
 
   <!-- SOUND -->
@@ -415,26 +440,60 @@
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 let S = null;   // everything the PC told us
 
-const FEATURES = {
-  fNotice: [
-    ['music', 'Dances to music', 'Dances and shows the song when Spotify, YouTube or any player is playing.'],
-    ['reading', 'Reading glasses', 'Puts on glasses and reads along with PDFs, Google Docs, Wikipedia and more.'],
-    ['meeting', 'Quiet in meetings', 'Goes quiet and mutes itself in Zoom, Teams, Meet, Webex and Skype.'],
-    ['suspicious', 'Suspicious squint', 'Gives you a look when you open YouTube, Netflix, Reddit and friends.'],
-    ['stress', 'Feels your CPU', 'Turns orange and sweats when your PC is working hard.'],
-  ],
-  fCare: [
-    ['breaks', 'Break reminders', 'Reminds you to stretch and drink water.'],
-    ['bedtime', 'Bedtime nudges', 'Gets drowsy after midnight and nudges you toward bed.'],
-  ],
-  fLife: [
-    ['quirks', 'Quirks', 'Sneezes, hiccups, hums, nods off and chases flies when things are quiet.'],
-  ],
-  fAlerts: [
-    ['mailAlerts', 'New mail alerts', 'Tells you who just emailed you (needs Gmail connected).'],
-    ['calendarAlerts', 'Calendar reminders', '10 minutes before each event and when it starts (needs Calendar connected).'],
-  ],
-};
+// Every feature, with how to control it: pref = an on/off switch, link = set up on another page,
+// otherwise it's always on. try = what the ▶ button shows on the preview robot.
+const FEATURES = [
+  ['👀 Watching you', [
+    ['🖱️', 'Follows your cursor', 'Its eyes track your mouse across every monitor, and glance around when you stop.', {}],
+    ['😉', 'Blinks and smiles', 'Blinks naturally (sometimes twice) and gives you a random smile now and then.', { try: { mood: 'happy' } }],
+    ['😵', 'Dizzy from mouse spins', 'Spin your mouse in fast circles and its eyes turn into spirals.', { pref: 'spin', try: { mood: 'dizzy' } }],
+  ]],
+  ['🖥️ Your PC and your tasks', [
+    ['🎵', 'Dances to music', 'Spotify, YouTube Music or any player: it dances in time with the beat, shows the song, and is sad when you pause. The music keeps going alongside everything else, like reading or tools.', { pref: 'music', try: { mood: 'song' } }],
+    ['🍿', 'Movie night', 'Netflix, Prime Video, Disney+, trailers and YouTube videos: it settles in with popcorn and munches along.', { pref: 'movie', try: { mood: 'movie' } }],
+    ['👓', 'Reading glasses', 'Puts on glasses and reads along with documents: PDFs, Word and DOCX files, Google Docs, e-books, Wikipedia and articles. Not for browsing Google Drive.', { pref: 'reading', try: { mood: 'reading' } }],
+    ['🎶', 'Reading with music', 'Reading while music plays? Glasses on, notes floating, still bobbing to the beat.', { try: { mood: 'readmusic' } }],
+    ['🤓', 'Focus mode', 'Narrowed, concentrating eyes in VS Code, terminals, Figma, Excel and PowerPoint.', { try: { mood: 'focused' } }],
+    ['👀', 'Suspicious squint', 'Gives you a look when you browse YouTube, Reddit, Instagram and friends.', { pref: 'suspicious', try: { mood: 'suspicious' } }],
+    ['🥵', 'Feels your CPU', 'Turns orange and sweats when your PC is working hard.', { pref: 'stress', try: { mood: 'stressed' } }],
+    ['🤫', 'Quiet in meetings', 'Goes soft blue and mutes itself in Zoom, Teams, Meet, Webex and Skype.', { pref: 'meeting', try: { mood: 'meeting' } }],
+  ]],
+  ['🤚 Touch and play', [
+    ['🫶', 'Pet it', 'Slide a finger across it: sparkly eyes, a contented hum, and it leans into your finger.', { try: { mood: 'content' } }],
+    ['👉', 'Poke it', 'It giggles, but poke too much and it sulks until you pet it to make up.', { try: { mood: 'grumpy' } }],
+    ['🤔', 'Curious about your finger', 'Hold a finger still and it studies it.', { try: { mood: 'curious' } }],
+    ['😆', 'Secret tickle spot', 'Somewhere low on the screen, in a new place every time.', {}],
+    ['⏳', 'Toolbox', 'Hold the screen for 2 seconds: timer (hourglass eyes), clock, stopwatch, focus sessions, breathing and dice.', { pref: 'toolbox', try: { tool: 'timer' } }],
+  ]],
+  ['📳 Phone sensors', [
+    ['🌀', 'Shake, tilt, lay it down', 'Shake it and it gets dizzy, tilt it and its eyes roll like marbles, lay it flat and it relaxes. Needs the secure link.', { pref: 'sensors', try: { mood: 'relaxed' }, link: ['#phone', 'Set up'] }],
+    ['👏', 'Clap twice', 'Two claps wake it up. The mic only measures loudness on the phone; nothing is recorded or sent.', { pref: 'mic', try: { mood: 'surprised' } }],
+    ['🔋', 'Phone battery', "Shows the phone's battery in the status bar (Android), and asks to be plugged in when it's low.", {}],
+    ['📊', 'Tap any number', 'Tap the time, work timer, mail, events, battery or running timers on the phone for details and actions: reset the work timer, snooze, pause or reset timers…', {}],
+  ]],
+  ['☀️ Your day', [
+    ['🌅', 'Greetings', 'Stretches and says good morning, and really missed you after a few days apart.', { pref: 'greetings', try: { mood: 'stretch' } }],
+    ['😴', 'Sleeps when you\'re away', 'Sleepy after 2 minutes away, asleep after 10, and happy when you come back.', { try: { mood: 'sleeping' } }],
+    ['💧', 'Break reminders', 'Reminds you to stretch and drink water.', { pref: 'breaks', setting: 'breakMinutes' }],
+    ['🌙', 'Bedtime nudges', 'Gets drowsy after midnight and nudges you toward bed.', { pref: 'bedtime', try: { mood: 'drowsy' } }],
+  ]],
+  ['💞 Personality and friendship', [
+    ['🎭', 'Name, gender and personality', 'Every buddy is born with its own; change them any time.', { link: ['#buddy', 'Change'] }],
+    ['💙', 'Friendship levels', 'Grows from shy to best friends, with new behaviours at every level.', { try: { mood: 'levelup' } }],
+    ['🤧', 'Quirks', 'Sneezes, hiccups, hums, nods off and chases flies when things are quiet.', { pref: 'quirks', try: { mood: 'sneeze' } }],
+  ]],
+  ['🔊 Voice and sound', [
+    ['💬', 'Buddy-speak', 'Says its speech bubbles out loud in soft vowel sounds whose melody follows the feeling.', { pref: 'babble', try: { mood: 'question' } }],
+    ['🎙️', 'Voices and where sound plays', 'A voice for each personality and gender, played on the phone, the PC or both.', { link: ['#sound', 'Sound settings'] }],
+  ]],
+  ['📬 Mail and calendar', [
+    ['📧', 'New mail alerts', 'Tells you who just emailed you, and shows how many are unread.', { pref: 'mailAlerts', try: { mood: 'mail' }, link: ['#accounts', 'Connect'] }],
+    ['📅', 'Calendar reminders', '10 minutes before each event and again when it starts.', { pref: 'calendarAlerts', try: { mood: 'event' }, link: ['#accounts', 'Connect'] }],
+  ]],
+  ['😈 Cheeky mode', [
+    ['😏', 'Playful teasing', 'From a sideways glance to dodging your finger. Off unless you turn it on.', { link: ['#cheeky', 'Choose level'] }],
+  ]],
+];
 const SOUND = [
   ['phone', '📱', 'Phone', 'Sounds come from the phone, right where your buddy is.'],
   ['pc', '🖥️', 'PC', 'Sounds play through this PC\'s speakers or headphones.'],
@@ -478,6 +537,32 @@ function toast(msg, err) {
 }
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
+// ---------- the full features list ----------
+function renderFeatures() {
+  const p = S.prefs, q = ($('#fSearch').value || '').toLowerCase();
+  let total = 0, on = 0;
+  $('#fList').innerHTML = FEATURES.map(([group, rows]) => {
+    const shown = rows.filter(r => !q || (group + r[1] + r[2]).toLowerCase().includes(q));
+    total += rows.length;
+    rows.forEach(r => { if (!r[3].pref || p[r[3].pref]) on++; });
+    if (!shown.length) return '';
+    return `<div class="fgroup"><h2>${group}</h2>` + shown.map(([ic, name, desc, c]) => {
+      const tryBtn = c.try ? `<button class="try" data-try='${JSON.stringify(c.try)}'>▶ Try</button>` : '';
+      const link = c.link ? `<a class="golink" href="${c.link[0]}">${c.link[1]} →</a>` : '';
+      const ctl = c.pref ? `<label class="switch"><input type="checkbox" data-pref="${c.pref}" ${p[c.pref] ? 'checked' : ''}><span></span></label>`
+                 : c.link ? '' : '<span class="chip-on">Always on</span>';
+      const setting = c.setting === 'breakMinutes' ? `<div class="sub-setting">Remind me after <span class="rangeval" id="breakVal">${p.breakMinutes}</span> min
+        <input type="range" id="breakMinutes" min="10" max="180" step="5" value="${p.breakMinutes}" style="max-width:260px" ${p.breaks ? '' : 'disabled'}></div>` : '';
+      return `<div class="frow ${c.pref && !p[c.pref] ? 'off' : ''}"><div class="ic">${ic}</div><div><h3>${name}</h3><p>${desc}</p></div>
+        <div class="fctl">${tryBtn}${link}${ctl}</div>${setting}</div>`;
+    }).join('') + '</div>';
+  }).join('') || '<p class="muted">No feature matches that search.</p>';
+  $('#fSummary').textContent = `${total} features, ${on} switched on. Press ▶ to see one on the robot; changes reach your phone instantly.`;
+}
+$('#fSearch').addEventListener('input', renderFeatures);
+document.addEventListener('input', e => { if (e.target.id === 'breakMinutes') $('#breakVal').textContent = e.target.value; });
+document.addEventListener('change', e => { if (e.target.id === 'breakMinutes') api('prefs', { breakMinutes: +e.target.value }).then(() => S.prefs.breakMinutes = +e.target.value); });
+
 // ---------- rendering ----------
 function renderAll() {
   const b = S.buddy, p = S.prefs;
@@ -493,12 +578,9 @@ function renderAll() {
   if (document.activeElement !== $('#name')) $('#name').value = b.name;
   $('#persChoices').innerHTML = Object.entries(S.personalities).map(([k, v]) =>
     `<button class="choice ${k === b.personality ? 'on' : ''}" data-pers="${k}"><span class="em">${v.split(' ').pop()}</span><b>${v.replace(/\s\S+$/, '')}</b><small>${PERS_INFO[k]}</small></button>`).join('');
-  for (const [box, list] of Object.entries(FEATURES)) {
-    $('#' + box).innerHTML = list.map(([k, t, d]) =>
-      `<div class="toggle"><div><h3>${t}</h3><p>${d}</p></div><label class="switch"><input type="checkbox" data-pref="${k}" ${p[k] ? 'checked' : ''}><span></span></label></div>`).join('');
-  }
-  $('#breakMinutes').value = p.breakMinutes; $('#breakVal').textContent = p.breakMinutes;
-  $('#breakRow').style.opacity = p.breaks ? 1 : .4;
+  $('#genderChoices').innerHTML = Object.entries(S.genders).map(([k, v]) =>
+    `<button class="choice ${k === b.gender ? 'on' : ''}" data-gender="${k}"><span class="em">${v.split(' ').pop()}</span><b>${v.replace(/\s\S+$/, '')}</b><small>${{ boy: 'A lower voice and little eyebrows.', girl: 'A higher voice, eyelashes and a bow.', neutral: 'Its natural robot voice.' }[k]}</small></button>`).join('');
+  renderFeatures();
   const soundCards = SOUND.map(([k, e, t, d]) => `<button class="choice ${p.soundOutput === k ? 'on' : ''}" data-sound="${k}"><span class="em">${e}</span><b>${t}</b><small>${d}</small></button>`).join('');
   $('#soundChoices').innerHTML = $('#wSound').innerHTML = soundCards;
   $('#volume').value = p.volume; $('#volVal').textContent = p.volume + '%';
@@ -518,7 +600,7 @@ function renderAll() {
   $('#cu').placeholder = S.calendarSaved ? 'Saved - leave empty to keep it' : 'https://calendar.google.com/calendar/ical/…';
   $('#startup').checked = S.startup; $('#startup').disabled = !S.installed;
   $('#ver').textContent = `Desk Buddy ${S.version}${S.installed ? '' : ' (development copy)'}`;
-  const robotSrc = `/?demo&name=${encodeURIComponent(b.name)}&personality=${b.personality}&level=${b.level}`;
+  const robotSrc = `/?demo&name=${encodeURIComponent(b.name)}&personality=${b.personality}&gender=${b.gender}&level=${b.level}`;
   $$('iframe.robot').forEach(f => { if (!f.src.endsWith(robotSrc)) f.src = robotSrc; });
   renderLive();
 }
@@ -583,14 +665,20 @@ document.addEventListener('click', async e => {
   const s = e.target.closest('[data-sound]'), pers = e.target.closest('[data-pers]'), test = e.target.closest('[data-test]');
   if (s) { S.prefs.soundOutput = s.dataset.sound; renderAll(); await api('prefs', { soundOutput: s.dataset.sound }); }
   if (pers && pers.dataset.pers !== S.buddy.personality) { await api('buddy', { personality: pers.dataset.pers }); await load(); }
+  const gen = e.target.closest('[data-gender]');
+  if (gen && gen.dataset.gender !== S.buddy.gender) { await api('buddy', { gender: gen.dataset.gender }); await load(); }
+  const tr = e.target.closest('.try');
+  if (tr) {
+    const msg = JSON.parse(tr.dataset.try), robot = $('#featRobot').contentWindow;
+    if (!msg.tool) robot.postMessage({ tool: '' }, '*');
+    robot.postMessage(msg, '*');
+  }
   if (test) api('test-sound', { where: test.dataset.test });
   const ch = e.target.closest('[data-cheeky]');
   if (ch) { S.prefs.cheeky = +ch.dataset.cheeky; renderAll(); await api('prefs', { cheeky: S.prefs.cheeky }); }
   const v = e.target.closest('[data-voice]');
   if (v) $('#voiceRobot').contentWindow.postMessage({ voice: v.dataset.voice }, '*');
 });
-$('#breakMinutes').addEventListener('input', e => $('#breakVal').textContent = e.target.value);
-$('#breakMinutes').addEventListener('change', e => api('prefs', { breakMinutes: +e.target.value }));
 $('#volume').addEventListener('input', e => $('#volVal').textContent = e.target.value + '%');
 $('#cheeky').addEventListener('input', async e => { S.prefs.cheeky = +e.target.value; renderAll(); await api('prefs', { cheeky: S.prefs.cheeky }); });
 $('#volume').addEventListener('change', e => { S.prefs.volume = +e.target.value; api('prefs', { volume: +e.target.value }); });

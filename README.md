@@ -11,8 +11,9 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | You move the mouse | Follows your cursor with its eyes across every monitor |
 | VS Code, a terminal, Figma, Office… | Narrow-eyed focus mode 🤓 |
 | YouTube, Netflix, Reddit… | Gives you a suspicious purple squint 👀 |
-| Spotify, YouTube or any player is playing | Dances to the beat and shows the song name 🎵 |
-| A PDF, Google Docs, Wikipedia… is open | Puts on reading glasses and reads along 👓 |
+| Music is playing (Spotify, YouTube Music, any player) | Dances in time with the beat (the PC works out the tempo) and shows the song 🎵, even while reading or using a tool |
+| A movie or video is playing (Netflix, Prime, trailers, YouTube) | Watches with screen-lit eyes and munches popcorn 🍿 |
+| A document is open (PDF, Word/DOCX, Google Docs, e-books, articles) | Puts on reading glasses and reads along 👓 |
 | You're in a Zoom / Teams / Meet call | Goes quiet and mutes itself 🤫 |
 | CPU above 85% | Turns orange and sweats 🥵 |
 | New Gmail arrives | Shows the sender and subject 📧 |
@@ -26,7 +27,7 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | You spend time together | Friendship grows from level 1 (shy) to 5 (best friends) 💞 |
 | Nothing much happening | Sneezes, hiccups, hums, nods off and chases flies 🤧 |
 
-It talks in soft "buddy-speak" (vowel sounds whose melody follows the feeling, never words), in one of five personality voices. Every buddy gets its own random name and personality. Optional **Cheeky mode** adds playful teasing at three levels.
+It talks in soft "buddy-speak" (vowel sounds whose melody follows the feeling, never words), in one of five personality voices. Every buddy gets its own random name, gender (boy, girl or just a robot) and personality. On the phone, tap any number in the status bar (time, work timer, mail, events, battery, running timers) for details and actions. The dashboard's Features tab lists every feature with a switch or setting. Optional **Cheeky mode** adds playful teasing at three levels.
 
 ## Install
 

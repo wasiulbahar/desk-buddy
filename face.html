@@ -38,7 +38,24 @@
   .bar { display: inline-block; width: 52px; height: 6px; margin-left: 6px; vertical-align: middle;
          background: rgba(255,255,255,.12); border-radius: 3px; overflow: hidden; }
   .bar i { display: block; height: 100%; width: 0; background: var(--eye); transition: width .8s; }
-  #snd, #bond { pointer-events: auto; cursor: pointer; padding: 6px 10px; margin: -6px -10px; }
+  #snd, #hud [data-sheet] { pointer-events: auto; cursor: pointer; padding: 8px 10px; margin: -8px -10px; }
+  #mailc:empty, #next:empty, #batt:empty, #running:empty, #bond:empty { display: none; }
+  /* details sheet for the status bar numbers */
+  #sheet { position: fixed; inset: 0; z-index: 6; display: none; align-items: flex-end; justify-content: center;
+           background: rgba(0,0,0,.55); backdrop-filter: blur(3px); }
+  #sheet.on { display: flex; }
+  #sheet .box { width: min(560px, 94vw); margin-bottom: max(14px, env(safe-area-inset-bottom)); padding: 18px 20px;
+                background: rgba(12,22,30,.97); border: 1px solid var(--eye); border-radius: 22px; color: #e3f8fc;
+                font-size: clamp(14px, 3.4vmin, 18px); max-height: 80vh; overflow-y: auto; animation: rise .25s ease; }
+  @keyframes rise { from { transform: translateY(30px); opacity: 0; } }
+  #sheet h3 { margin: 0 0 8px; color: var(--eye); font-size: 1.2em; }
+  #sheet .row { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border-top: 1px solid rgba(255,255,255,.08); }
+  #sheet .row span:first-child { opacity: .65; }
+  #sheet .muted { opacity: .65; font-size: .9em; margin: 6px 0 0; }
+  #shActions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  #shActions button { font: inherit; font-size: .9em; border-radius: 12px; padding: 9px 14px; cursor: pointer;
+                      background: transparent; color: #e3f8fc; border: 1px solid rgba(255,255,255,.25); }
+  #shActions button.main { background: var(--eye); color: #04161b; border-color: transparent; font-weight: 600; }
   /* the hold menu */
   #menu { position: fixed; inset: 0; display: none; background: rgba(0,0,0,.5); backdrop-filter: blur(3px); z-index: 5; }
   #menu.on { display: block; }
@@ -54,7 +71,6 @@
            border: 1px solid rgba(255,255,255,.25); background: rgba(10,20,26,.7); color: #cfe; font-size: 18px;
            display: none; z-index: 4; cursor: pointer; }
   #toolx.on { display: block; }
-  #mailc:empty, #next:empty { display: none; }
   @media (max-width: 640px) { #hud .sys { display: none; } }
 </style>
 </head>
@@ -64,16 +80,18 @@
 <div id="menu"></div>
 <button id="toolx" title="Back to your buddy">✖</button>
 <div id="hud">
-  <span id="clock">--:--</span>
-  <span class="sys">CPU<span class="bar"><i id="cpu"></i></span></span>
-  <span class="sys">RAM<span class="bar"><i id="ram"></i></span></span>
-  <span id="work">⏱ 0m</span>
-  <span id="mailc"></span>
-  <span id="next"></span>
-  <span id="bond" title="Your buddy"></span>
-  <span id="running"></span>
+  <span id="clock" data-sheet="clock">--:--</span>
+  <span class="sys" data-sheet="pc">CPU<span class="bar"><i id="cpu"></i></span></span>
+  <span class="sys" data-sheet="pc">RAM<span class="bar"><i id="ram"></i></span></span>
+  <span id="work" data-sheet="work">⏱ 0m</span>
+  <span id="mailc" data-sheet="mail"></span>
+  <span id="next" data-sheet="calendar"></span>
+  <span id="batt" data-sheet="battery"></span>
+  <span id="bond" data-sheet="buddy" title="Your buddy"></span>
+  <span id="running" data-sheet="running"></span>
   <span id="snd" title="Sound on/off">🔊</span>
 </div>
+<div id="sheet"><div class="box"><h3 id="shTitle"></h3><div id="shBody"></div><div id="shActions"></div></div></div>
 <script>
 const $ = id => document.getElementById(id);
 const cv = $('c'), ctx = cv.getContext('2d');
@@ -84,13 +102,19 @@ const DEFAULT_PREFS = {
   music: true, reading: true, meeting: true, suspicious: true, stress: true, quirks: true,
   breaks: true, breakMinutes: 50, bedtime: true, mailAlerts: true, calendarAlerts: true,
   soundOutput: 'phone', volume: 80, cheeky: 0, sensors: true, mic: true,
+  movie: true, greetings: true, spin: true, toolbox: true, babble: true,
 };
 const P = k => ((state && state.prefs) || DEFAULT_PREFS)[k];
 
 // What you're doing, judged from the window title.
 const FUN_RE = /youtube|netflix|twitch|reddit|instagram|tiktok|facebook|prime video|disney\+|9gag/i;
-const WORK_RE = /visual studio|vs ?code|pycharm|intellij|android studio|sublime|notepad\+\+|vim|terminal|powershell|command prompt|figma|github| - (word|excel|powerpoint)$/i;
-const READ_RE = /\.pdf\b|\bpdf\b|acrobat|foxit|sumatra|okular|google docs|google drive|wikipedia|medium|kindle|arxiv|substack|notion|\.epub\b|calibre|e-?book|reader view|scribd|researchgate|goodreads/i;
+const WORK_RE = /visual studio|vs ?code|pycharm|intellij|android studio|sublime|notepad\+\+|vim|terminal|powershell|command prompt|figma|github| - (excel|powerpoint)$/i;
+// Reading glasses only for actual documents and articles (a PDF previewed in Drive counts; Drive's file list doesn't).
+const READ_RE = /\.(pdf|docx?|odt|rtf|epub|mobi|pptx?)\b| - word$|google docs|acrobat|foxit|sumatra|okular|kindle|wikipedia|medium\.com| - medium$|arxiv|substack|calibre|e-?book reader|reader view|scribd|researchgate/i;
+// Is what's playing music or something to watch?
+const MUSIC_RE = /spotify|youtube music|music\.youtube|soundcloud|apple music|deezer|tidal|pandora|amazon music|bandcamp|audiomack|jiosaavn|gaana|wynk|official (audio|music video|video|lyric)|lyrics?\b|\(audio\)|\[audio\]| - topic\b|\bft\.|\bfeat\.|\bremix\b|\bacoustic\b|\bplaylist\b|\blo-?fi\b|\bsongs?\b|\balbum\b/i;
+const MOVIE_RE = /netflix|prime video|disney\+|hotstar|hulu|hbo|crunchyroll|apple tv|paramount\+|peacock|zee5|sonyliv|mubi|vlc media player|mpc-hc|films? & tv|movies? & tv|\btrailer\b|\bepisode\b|\bs\d{1,2}\s?e\d{1,2}\b|\bseason \d|full movie|\bmovie\b|\.(mkv|mp4|avi|mov)\b/i;
+const VIDEO_RE = /youtube|twitch|vimeo|dailymotion|bilibili/i;
 const MEET_RE = /zoom meeting|zoom workplace|meeting \| microsoft teams|call \| microsoft teams|\| microsoft teams.*(meeting|call)|google meet|meet\.google|^meet - |webex|skype/i;
 
 // Eye shapes. lid = top lid closed, tilt > 0 angry / < 0 worried, happy = ^_^ curve,
@@ -114,6 +138,7 @@ const MOODS = {
   reading:     shape({ w: .92, h: .74, lidL: .12, lidR: .12, glasses: 1 }),
   meeting:     shape({ w: .88, h: .82, lidL: .08, lidR: .08, color: [150, 200, 255] }),
   relaxed:     shape({ w: 1.05, h: .8, lidL: .25, lidR: .25, happy: .3, sparkle: .3, color: [120, 230, 255] }),
+  watching:    shape({ w: 1.06, h: 1.08, lidL: .04, lidR: .04, color: [255, 228, 175] }),   // movie night: warm screen glow
   drowsy:      shape({ lidL: .32, lidR: .32, tilt: -.15, color: [80, 190, 235] }),
   focused:     shape({ w: 1.05, h: .8, lidL: .2, lidR: .2, tilt: .2 }),
   sleepy:      shape({ lidL: .55, lidR: .55, tilt: -.25, color: [70, 170, 220] }),
@@ -308,6 +333,7 @@ const CONTOURS = {
 function voice() {
   const v = { ...VOICES[state.buddy && state.buddy.personality] || VOICES.cheerful }, lv = friendship();
   v.vol *= .8 + lv * .06;                    // shy and quiet at first, warmer as you become friends
+  v.pitch *= { girl: 1.18, boy: .84 }[state.buddy && state.buddy.gender] || 1;
   v.swing = 1 + (v.swing - 1) * (.8 + lv * .08);
   return v;
 }
@@ -389,17 +415,37 @@ function onState(s) {
     if (lastAng !== null) spin = spin * .97 + (((a - lastAng) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
     lastAng = a;
   } else { spin *= .85; lastAng = null; }
-  if (Math.abs(spin) > trait().dizzyAt) { spin = 0; if (rateOk('dizzy', 8000)) getDizzy(); }
+  if (Math.abs(spin) > trait().dizzyAt) { spin = 0; if (P('spin') && rateOk('dizzy', 8000)) getDizzy(); }
 
-  // Music: steady sound for a few seconds (or a song playing in Spotify/YouTube). A beat is a spike.
+  // Music: steady sound for a few seconds (or a song playing in Spotify/YouTube).
   const lvl = s.audio || 0;
   audioAvg += (lvl - audioAvg) * .05;
   musicSince = audioAvg > .04 ? (musicSince || now) : 0;
-  if (lvl > audioAvg * 1.35 + .04 && now - lastBeat > 280) beat(now);
+  if (!s.beat && lvl > audioAvg * 1.35 + .04 && now - lastBeat > 280) beat(now);   // no tempo from the PC: dance on the loud bits
+  // Line the phone's clock up with the PC's, so the beat the PC heard lands on time here.
+  if (s.now) clockOffset = clockOffset === null ? Date.now() - s.now : Math.min(clockOffset + 2, Date.now() - s.now);
 }
 const connected = now => now - lastMsg < 3000;
 const songPlaying = () => !!(state.media && state.media.playing);
-const musicPlaying = now => P('music') && ((songPlaying() && audioAvg > .015) || (musicSince && now - musicSince > 3000));
+let clockOffset = null, musicOn = false;
+
+// What kind of thing is playing: 'music', 'movie' (or another video: popcorn time) or nothing.
+function mediaKind(now) {
+  const m = state.media, playing = songPlaying();
+  const sound = (playing && audioAvg > .015) || (musicSince && now - musicSince > 3000);
+  if (!playing && !sound) return null;
+  const text = `${state.title || ''} ${m ? `${m.title} ${m.artist} ${m.app}` : ''}`;
+  const music = (m && m.app === 'Spotify') || MUSIC_RE.test(text);
+  if (!music && (MOVIE_RE.test(text) || VIDEO_RE.test(text))) return 'movie';   // a video playing: popcorn straight away
+  return sound ? 'music' : null;   // music waits until it can actually hear it
+}
+// Where we are inside the current beat (0 → 1), using the tempo the PC worked out.
+function beatPhase() {
+  const b = state.beat;
+  if (!b || clockOffset === null) return null;
+  const period = 60000 / b.bpm, t = (Date.now() - clockOffset - b.t0) / period;
+  return { phase: t - Math.floor(t), count: Math.floor(t) };
+}
 const tellPC = kind => { if (!DEMO) fetch('bond', { method: 'POST', body: kind }).catch(() => {}); };
 
 // Demo mode (face.html?demo) for the website: no PC needed. The page around it sends
@@ -411,9 +457,9 @@ const DEMO_LINES = {
   suspicious: 'Hmm… is this work? 👀', surprised: "Oh! You're back! 👋",
 };
 if (DEMO) {
-  let demo = { x: 0, y: 0 }, demoSongUntil = 0, demoReadUntil = 0;
+  let demo = { x: 0, y: 0 }, demoSongUntil = 0, demoReadUntil = 0, demoMovieUntil = 0;
   const demoBuddy = { name: params.get('name') || 'Pip', personality: params.get('personality') || 'cheerful',
-                      level: +params.get('level') || 3, progress: .4, days: 12, awayDays: 0 };
+                      gender: params.get('gender') || 'neutral', level: +params.get('level') || 3, progress: .4, days: 12, awayDays: 0 };
   addEventListener('message', e => {
     const d = e.data || {}, now = performance.now();
     if (typeof d.x === 'number') demo = { x: clamp(d.x, -1, 1), y: clamp(d.y, -1, 1) };
@@ -426,12 +472,15 @@ if (DEMO) {
       speak(3, 'question', { delay: 1.5 });
       return;
     }
+    if (d.gender) { demoBuddy.gender = d.gender; return; }   // dashboard preview of boy / girl / robot
     if ('tool' in d) { if (TOOLS[d.tool]) startTool(d.tool); else if (tool) endTool(); return; }   // website demo of the tools
     if (!d.mood) return;
     cancelQuirk();
     if (d.mood === 'dizzy') getDizzy();
-    else if (d.mood === 'song') demoSongUntil = now + 14000;
+    else if (d.mood === 'song') { demoSongUntil = now + 14000; demoMovieUntil = demoReadUntil = 0; }
     else if (d.mood === 'reading') demoReadUntil = now + 14000;
+    else if (d.mood === 'movie') { demoMovieUntil = now + 14000; demoSongUntil = demoReadUntil = 0; }
+    else if (d.mood === 'readmusic') { demoReadUntil = demoSongUntil = now + 14000; demoMovieUntil = 0; }
     else if (d.mood === 'mail') announceMail({ count: 1, latest: { from: 'Alex', subject: 'Lunch tomorrow? 🍜' } });
     else if (d.mood === 'event') remind('📅 <b>Team standup</b> in 10 min', false);
     else if (d.mood === 'levelup') levelUp(4);
@@ -447,12 +496,15 @@ if (DEMO) {
     }
   });
   addEventListener('pointermove', e => demo = { x: e.clientX / innerWidth * 2 - 1, y: e.clientY / innerHeight * 2 - 1 });
+  const demoBeatT0 = Date.now();
   setInterval(() => {
-    const now = performance.now(), song = now < demoSongUntil;
-    onState({ ...demo, cpu: 12, ram: 45, idle: 0, work: 12, buddy: demoBuddy,
-              title: now < demoReadUntil ? 'Paper.pdf - Adobe Acrobat' : '',
-              media: song ? { title: 'Sunny Afternoon', artist: 'The Demo Band', playing: true, app: 'Spotify' } : null,
-              audio: song ? ((now % 500) < 140 ? .7 : .15) : 0 });
+    const now = performance.now(), song = now < demoSongUntil, movie = now < demoMovieUntil;
+    onState({ ...demo, cpu: 12, ram: 45, idle: 0, work: 12, buddy: demoBuddy, now: Date.now(),
+              title: now < demoReadUntil ? 'Paper.pdf - Adobe Acrobat' : movie ? 'Big Buck Bunny - Official Trailer - YouTube' : '',
+              media: song ? { title: 'Sunny Afternoon', artist: 'The Demo Band', playing: true, app: 'Spotify' }
+                   : movie ? { title: 'Big Buck Bunny - Official Trailer', artist: 'Blender', playing: true, app: 'Chrome' } : null,
+              beat: song ? { bpm: 120, t0: demoBeatT0 } : null,
+              audio: song ? ((Date.now() - demoBeatT0) % 500 < 140 ? .7 : .15) : movie ? .2 : 0 });
   }, 66);
 } else {
   new EventSource('events').onmessage = e => onState(JSON.parse(e.data));
@@ -468,7 +520,7 @@ function say(html, ms, feeling) {
   bubble.classList.add('show');
   clearTimeout(bubbleTimer);
   if (ms > 0) bubbleTimer = setTimeout(() => reminding ? showReminder() : bubble.classList.remove('show'), ms);
-  if (feeling !== false) {
+  if (feeling !== false && P('babble')) {
     const text = html.replace(/<small>.*?<\/small>/g, '');
     speak(Math.min(8, Math.max(1, Math.ceil(wordsIn(text) * .8))), feeling || (text.includes('?') ? 'question' : 'happy'));
   }
@@ -512,6 +564,7 @@ function onMoodChange(prev, m, now) {
 
 // The first time it sees you each day: a stretch and a hello (and a proper reunion after days apart).
 function checkGreeting(now) {
+  if (!P('greetings')) { greetAfter = 0; return; }
   if (!greetAfter || now < greetAfter || !connected(now) || state.idle > 30 || !state.buddy) return;
   greetAfter = 0;
   const b = state.buddy, today = new Date().toDateString();
@@ -541,7 +594,9 @@ let song = '', wasPlaying = false, mailSeq = null, lastLevel = +store.get('level
 const reminded = new Set();
 function checkMedia(now) {
   const m = state.media, playing = songPlaying(), key = m ? m.title + '|' + m.artist : '';
-  if (!P('music')) { wasPlaying = playing; song = key; return; }
+  const kind = mediaKind(now);
+  if (playing && !kind) return;   // still working out whether it's music or a movie
+  if (!P('music') || kind === 'movie') { wasPlaying = playing; song = key; return; }   // only songs get announced
   if (playing && m.title && key !== song) {           // a new song started
     song = key; cancelQuirk(); setOverride('happy', 900); sfx.chirp();
     say(`🎵 <b>${esc(m.title)}</b>${m.artist ? `<br><small>${esc(m.artist)}</small>` : ''}`, 3500, false);
@@ -605,19 +660,21 @@ const showIcon = (i, ms) => { icon = i; iconUntil = performance.now() + ms; };
 
 function think(now) {
   let m;
-  const title = state.title || '';
+  const title = state.title || '', kind = connected(now) ? mediaKind(now) : null;
+  musicOn = kind === 'music' && P('music');   // music is a layer: it keeps going under whatever else is happening
   if (!connected(now)) m = 'lost';
-  else if (state.idle > 600) m = 'sleeping';
-  else if (state.idle > trait().sleepyAfter) m = 'sleepy';
+  else if (state.idle > 600 && !kind) m = 'sleeping';
+  else if (state.idle > trait().sleepyAfter && !kind) m = 'sleepy';
   else if (P('meeting') && MEET_RE.test(title)) m = 'meeting';
   else if (P('stress') && cpuS > 85) m = 'stressed';
-  else if (musicPlaying(now)) m = 'groove';
+  else if (kind === 'movie' && P('movie')) m = 'watching';
   else if (P('reading') && READ_RE.test(title)) m = 'reading';
   else if (P('suspicious') && FUN_RE.test(title)) m = 'suspicious';
   else if (WORK_RE.test(title)) m = 'focused';
   else if (P('bedtime') && lateNight()) m = 'drowsy';
   else if (sensor.flat) m = 'relaxed';   // lying on its back: it chills out
   else m = 'neutral';
+  if (musicOn && ['neutral', 'drowsy', 'relaxed'].includes(m)) m = 'groove';   // nothing else going on: full dance mode
   if (m !== baseMood) { onMoodChange(baseMood, m, now); baseMood = m; }
 
   if (connected(now)) { checkGreeting(now); checkMedia(now); checkMail(); checkCalendar(); checkBond(); }
@@ -707,13 +764,56 @@ function getDizzy() {
   play([[3500, () => { setOverride('content', 800); }]]);
 }
 
+// Fallback when the PC has no tempo yet: bounce on each loud bit.
 let beats = 0;
 function beat(now) {
   lastBeat = now;
-  if (mood !== 'groove') return;
+  if (!musicOn && mood !== 'groove') return;
   swing = -swing; bounceV -= 2.2 * trait().bounce;
   if (++beats % 4 === 0) blinkStart = now;   // eyes close on the beat now and then, really feeling it
 }
+
+// Dancing in time: lands on every beat, sways left-right over two beats, squashes a little on landing.
+// Runs under every mood (reading with music = glasses AND dancing), and inside tools too.
+let dance = { x: 0, y: 0, tilt: 0, squash: 0, sway: 0 }, lastBeatCount = null;
+function danceTick() {
+  dance = { x: 0, y: 0, tilt: 0, squash: 0, sway: swing };
+  if (!musicOn || quiet()) return;
+  const bp = beatPhase();
+  if (!bp) { dance.tilt = swing * .06; return; }
+  const amp = trait().bounce * (mood === 'groove' ? 1 : .6), sway = Math.sin(Math.PI * (bp.count + bp.phase));
+  dance = { x: S * .1 * sway * amp, y: -S * .07 * amp * Math.abs(Math.sin(Math.PI * bp.phase)),
+            tilt: .06 * sway * amp, squash: Math.max(0, 1 - bp.phase * 6) * .1, sway };
+  if (bp.count !== lastBeatCount) {
+    lastBeatCount = bp.count;
+    if (bp.count % 4 === 0 && mood === 'groove') blinkStart = performance.now();   // eyes shut on the downbeat now and then
+  }
+}
+
+// Movie night: a popcorn bucket, and every few seconds a piece flies up to be munched.
+let nextMunch = 0, munchStart = -1e9;
+function drawPopcorn(now, cx, cy, color) {
+  const bx = cx, by = cy + S * .74, tw = S * .46, bw = S * .32, bh = S * .36;
+  if (now > nextMunch) { munchStart = now; nextMunch = now + 1800 + Math.random() * 2600; }
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(bx - tw / 2, by); ctx.lineTo(bx + tw / 2, by); ctx.lineTo(bx + bw / 2, by + bh); ctx.lineTo(bx - bw / 2, by + bh); ctx.closePath();
+  ctx.clip();
+  for (let i = -3; i <= 3; i++) {   // red and white stripes
+    ctx.fillStyle = i % 2 ? 'rgb(235,70,70)' : 'rgb(250,245,240)';
+    ctx.fillRect(bx + i * tw / 7 - tw / 14, by, tw / 7, bh);
+  }
+  ctx.restore();
+  ctx.fillStyle = 'rgb(255,243,210)';   // fluffy popcorn on top
+  [[-.17, .02], [-.08, -.05], [.02, -.07], [.12, -.04], [.19, .02], [-.03, .01], [.08, .02]].forEach(([dx, dy]) => {
+    ctx.beginPath(); ctx.arc(bx + dx * S, by + dy * S, S * .055, 0, Math.PI * 2); ctx.fill();
+  });
+  const p = (now - munchStart) / 650;
+  if (p < 1) {   // a piece arcs up to its face… munch
+    const x = bx + (1 - p) * S * .1, y = by - S * .08 - Math.sin(p * Math.PI * .5) * S * .45;
+    ctx.beginPath(); ctx.arc(x, y, S * .05 * (1 - p * .4), 0, Math.PI * 2); ctx.fill();
+  }
+}
+const munching = now => { const p = (now - munchStart) / 650; return p > 1 && p < 1.4; };
 
 // Where the fly is (-1..1 screen space): buzzes around, then zooms off at the end.
 function flyPos(now) {
@@ -791,6 +891,41 @@ function drawEye(cx, cy, w, h, lid, tilt, happy, sparkle, isLeft, color) {
   ctx.restore();
 }
 
+// Music notes drifting up on both sides; they keep floating whatever else it's doing.
+function drawNotes(now, cx, cy, gap, color) {
+  for (let i = 0; i < 4; i++) {
+    const p = (now / 2000 + i / 4) % 1, side = i % 2 ? 1 : -1;
+    floaty(i % 2 ? '♪' : '♫', cx + side * gap * (1.5 + p * .35) + Math.sin(p * 6 + i) * S * .05, cy + S * .2 - p * S * 1.2,
+           S * .26, Math.sin(p * Math.PI) * .85, color);
+  }
+}
+
+// Little touches for a boy or girl buddy: eyelashes and a bow, or a pair of eyebrows.
+function drawLashes(ex, cy, w, h, lid, side, color) {
+  if (h < S * .2) return;
+  const top = cy - h / 2 + lid * h, ox = ex + side * w * .42;
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = S * .032; ctx.lineCap = 'round';
+  for (let i = 0; i < 3; i++) {
+    const a = -Math.PI / 2 + side * (.45 + i * .35), x0 = ox - side * i * w * .12, y0 = top + i * S * .02;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + Math.cos(a) * S * .11, y0 + Math.sin(a) * S * .11); ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawBrow(ex, cy, w, h, lid, side, color) {
+  const y = cy - Math.max(h, S * .3) / 2 + lid * h * .6 - S * .13, bw = w * .55;
+  ctx.save(); ctx.translate(ex, y); ctx.rotate(side * cur.tilt * .5);
+  ctx.fillStyle = color; roundRect(-bw / 2, -S * .035, bw, S * .07, S * .035); ctx.fill();
+  ctx.restore();
+}
+function drawBow(x, y) {
+  ctx.save(); ctx.fillStyle = 'rgb(255,120,180)';
+  const s = S * .13;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - s, y - s * .7); ctx.lineTo(x - s, y + s * .7); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + s, y - s * .7); ctx.lineTo(x + s, y + s * .7); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, s * .32, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
 function drawStar(x, y, r, alpha) {   // a four-pointed twinkle
   ctx.globalAlpha = alpha; ctx.fillStyle = '#fff';
   ctx.beginPath(); ctx.moveTo(x, y - r);
@@ -844,18 +979,33 @@ function draw(now, blink) {
   const jitter = mood === 'stressed' ? S * 0.012 : 0;
   const breathe = (mood === 'sleeping' || mood === 'sleepy' || mood === 'dozy') ? Math.sin(now / 900) * S * .04 : 0;
   const wobble = Math.sin(now / 120) * S * .08 * cur.spiral;
-  const cx = W / 2 + look.x * S * .45 + (Math.random() - .5) * jitter + wobble;
-  const cy = H / 2 + look.y * S * .3 + breathe + bounce * S * .5 - (hudOn ? S * .06 : 0);
+  const watching = mood === 'watching';
+  const cx = W / 2 + look.x * S * .45 + (Math.random() - .5) * jitter + wobble + dance.x;
+  const cy = H / 2 + look.y * S * .3 + breathe + bounce * S * .5 + dance.y - (hudOn ? S * .06 : 0) - (watching ? S * .12 : 0);
   const gap = S * .72;
   const sparkle = Math.max(cur.sparkle, now < sparkleUntil ? 1 : 0);
+  const munch = watching && munching(now);
+  let ink = color;
+  if (watching) {   // the movie's light flickering on its face
+    const f = .9 + .1 * Math.sin(now / 230) * Math.sin(now / 517);
+    ink = `rgb(${col.map(c => Math.round(c * f))})`;
+  }
+  const g = state.buddy && state.buddy.gender;
   for (const side of [-1, 1]) {
     const persp = 1 + side * look.x * .07;   // eye nearer the look direction gets a bit bigger
-    const w = S * .78 * cur.w * persp;
-    const h = Math.max(S * cur.h * persp * blink, S * .05);
-    const ex = cx + side * gap;
-    if (cur.spiral > .5) drawSpiral(ex, cy, Math.min(w, h) * .5, side, now, color);
-    else drawEye(ex, cy, w, h, side < 0 ? cur.lidL : cur.lidR, cur.tilt, cur.happy, sparkle * Math.min(1, blink * 1.2), side < 0, color);
+    const squash = dance.squash + (munch ? .12 : 0);
+    const w = S * .78 * cur.w * persp * (1 + squash * .5);
+    const h = Math.max(S * cur.h * persp * blink * (1 - squash), S * .05);
+    const ex = cx + side * gap, lid = side < 0 ? cur.lidL : cur.lidR;
+    if (cur.spiral > .5) drawSpiral(ex, cy, Math.min(w, h) * .5, side, now, ink);
+    else {
+      drawEye(ex, cy, w, h, lid, cur.tilt, munch ? Math.max(cur.happy, .3) : cur.happy, sparkle * Math.min(1, blink * 1.2), side < 0, ink);
+      if (g === 'girl') drawLashes(ex, cy, w, h, lid, side, ink);
+      if (g === 'boy') drawBrow(ex, cy, w, h, lid, side, ink);
+    }
   }
+  if (g === 'girl' && cur.spiral < .5) drawBow(cx + gap + S * .3, cy - S * cur.h * .5 - S * .13);
+  if (watching) drawPopcorn(now, cx, cy, color);
   if (cur.glasses > .02) drawGlasses(W / 2 + look.x * S * .12, cy, gap, cur.glasses);
   if (sparkle > .05) {   // twinkles around its face
     const spots = [[-1.55, -.55], [1.6, -.4], [-1.2, .7], [1.3, .65], [0, -.85]];
@@ -890,12 +1040,7 @@ function draw(now, blink) {
   } else if (mood === 'lost') {
     floaty('?', rx + S * .55, top, S * .35, .5 + .5 * Math.sin(now / 400), color);
   }
-  if (mood === 'groove' || now < humUntil) {
-    for (let i = 0; i < 3; i++) {
-      const p = (now / 1800 + i / 3) % 1, side = i % 2 ? 1 : -1;
-      floaty(i % 2 ? '♪' : '♫', cx + side * gap * (1.5 + p * .3), cy - p * S * 1.1, S * .26, Math.sin(p * Math.PI), color);
-    }
-  }
+  if ((musicOn && mood !== 'meeting') || now < humUntil) drawNotes(now, cx, cy, gap, color);
   if (now < iconUntil) {   // ✉️ 🔔 👋 🎉 💙 bobbing up beside its head (clear of the speech bubble)
     const p = 1 - (iconUntil - now) / 3500;
     floaty(icon, rx + S * .78, cy - S * .05 - p * S * .35 + Math.sin(now / 160) * S * .04, S * .38, Math.min(1, (iconUntil - now) / 500), color);
@@ -1163,7 +1308,8 @@ function drawCoin(x, y, flip, side) {
 function drawTool(now, blink) {
   ctx.clearRect(0, 0, W, H);
   const color = `rgb(${TOOLS[tool].color})`, gap = S * .72;
-  const cy = H / 2 + bounce * S * .5 - (hudOn ? S * .12 : 0), lx = W / 2 - gap, rx = W / 2 + gap, below = cy + S * .74;
+  const cy = H / 2 + bounce * S * .5 + dance.y - (hudOn ? S * .12 : 0), lx = W / 2 - gap, rx = W / 2 + gap, below = cy + S * .74;
+  if (musicOn) drawNotes(now, W / 2, cy, gap * 1.15, color);   // the music keeps playing in the background
   const text = (s, y, size, alpha = 1) => {
     ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.font = `600 ${size}px system-ui, sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s, W / 2, y);
@@ -1458,7 +1604,8 @@ function frame(now) {
   else if (now - flyStart < 6000) lookT = flyPos(now);
   else if (now < humUntil) lookT = { x: Math.sin(now / 400) * .35, y: -.1 };
   else if (mood === 'reading') lookT = readingLook(now);
-  else if (mood === 'groove') lookT = { x: swing * .35, y: -.05 };
+  else if (mood === 'groove') lookT = { x: dance.sway * .35, y: -.05 };
+  else if (mood === 'watching') lookT = { x: Math.sin(now / 4000) * .1, y: -.08 };   // glued to the screen
   else if (mood === 'grumpy' || mood === 'sulk') lookT = { x: grumpySide * .8, y: .15 };
   else if (mood === 'bashful') lookT = { x: grumpySide * .7, y: .35 };
   else if (reminding || mood === 'surprised' || mood === 'dizzy') lookT = { x: 0, y: 0 };
@@ -1479,7 +1626,7 @@ function frame(now) {
       if (!touch.curious) { touch.curious = true; sfx.curious(); }
       setOverride('curious', 300);
     }
-    if (now - touch.t > HOLD_MS) { const { lx, ly } = touch; touch = null; openMenu(lx, ly); }
+    if (now - touch.t > HOLD_MS && (P('toolbox') || tool)) { const { lx, ly } = touch; touch = null; openMenu(lx, ly); }
   }
   toolTick(now);
   listen(now);
@@ -1492,7 +1639,8 @@ function frame(now) {
   cur.tilt += (T.tilt + frown - cur.tilt) * ks;
   for (let i = 0; i < 3; i++) col[i] += (T.color[i] - col[i]) * ks;
   look.x += (lookT.x - look.x) * kl; look.y += (lookT.y - look.y) * kl;
-  faceTilt += ((mood === 'groove' ? swing * .06 : 0) - faceTilt) * (1 - Math.exp(-dt * 6));
+  danceTick();
+  faceTilt += (dance.tilt - faceTilt) * (1 - Math.exp(-dt * 10));
 
   if (now > nextBlink && mood !== 'sleeping' && mood !== 'dizzy') {
     blinkStart = now;
@@ -1557,7 +1705,7 @@ function poke(x, y) {
 }
 
 addEventListener('pointerdown', e => {
-  if (e.target.closest('#snd, #bond, #menu, #toolx')) return;
+  if (e.target.closest('#snd, #hud [data-sheet], #sheet, #menu, #toolx')) return;
   if (!DEMO) { goFullscreen(); keepAwake(); }
   audio();   // phones only allow sound after the first touch
   const silenced = kit.timer.alarmUntil > performance.now();   // any touch silences a ringing timer
@@ -1612,13 +1760,110 @@ snd.addEventListener('pointerdown', e => {
   soundOn = !soundOn; store.set('sound', soundOn ? 'on' : 'off'); showSound();
   if (soundOn) sfx.chirp();
 });
-$('bond').addEventListener('pointerdown', e => {   // tap the 💙 to see your buddy's card
+// The phone's own battery (Android browsers share it; iPhones don't).
+let battery = null, warnedBattery = false;
+if (navigator.getBattery) navigator.getBattery().then(b => { battery = b; }).catch(() => {});
+function checkBattery() {
+  if (!battery) return;
+  if (battery.level <= .15 && !battery.charging && !warnedBattery && connected(performance.now())) {
+    warnedBattery = true; setOverride('sleepy', 2500);
+    say(`I'm getting hungry… 🔋 ${Math.round(battery.level * 100)}%<br><small>plug me in?</small>`, 4000, 'sad');
+  }
+  if (battery.charging) warnedBattery = false;
+}
+
+// ---------- tap any number in the status bar for details and actions ----------
+const sheet = $('sheet');
+const hm = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };
+const row = (a, b) => `<div class="row"><span>${a}</span><span>${b}</span></div>`;
+let sheetKind = null;
+function openSheet(kind) {
+  sheetKind = kind;
+  const actions = [], add = (label, fn, main) => actions.push({ label, fn, main });
+  let title = '', body = '';
+  const b = state.buddy, t = kit.timer, p = kit.pomo, w = kit.watch;
+  if (kind === 'clock') {
+    const d = new Date();
+    title = `🕐 ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    body = row('Today', d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }));
+    add('Show the clock', () => startTool('clock'), true); add('Set a timer', () => startTool('timer'));
+  } else if (kind === 'pc') {
+    title = '💻 Your PC';
+    body = row('Processor', `${state.cpu}%`) + row('Memory', `${state.ram}%`) + row('Working on', esc((state.title || '—').slice(0, 60)));
+  } else if (kind === 'work') {
+    const left = P('breakMinutes') - (state.work - breakAck);
+    title = `⏱ Working for ${hm(state.work * 60000)}`;
+    body = row('Next break reminder', P('breaks') ? (left > 0 ? `in ${hm(left * 60000)}` : 'now') : 'off (turn on in the dashboard)')
+      + `<p class="muted">Stepping away from the PC for 5 minutes also counts as a break.</p>`;
+    add('I just took a break', () => { fetch('work-reset', { method: 'POST' }).catch(() => {}); breakAck = 0; reminding = false; bubble.classList.remove('show'); tellPC('break'); setOverride('love', 1500); say('Nice! Timer reset 💙', 1800, 'happy'); }, true);
+    add('Remind me in 15 min', () => { breakAck = state.work - P('breakMinutes') + 15; reminding = false; bubble.classList.remove('show'); say('Okay, 15 more minutes ⏱', 1800, 'calm'); });
+    add('Start a focus session', () => startTool('pomo'));
+  } else if (kind === 'mail') {
+    const m = state.mail;
+    title = `✉ ${m ? m.unread : 0} unread`;
+    body = m && m.latest ? row('Latest from', esc(m.latest.from)) + row('Subject', esc(m.latest.subject)) : '<p class="muted">No new mail since I started watching.</p>';
+    add('Open Gmail', () => open('https://mail.google.com/', '_blank'), true);
+  } else if (kind === 'calendar') {
+    const evs = ((state.calendar && state.calendar.events) || []).filter(e => e.start * 1000 > Date.now() - 600000);
+    title = '📅 Coming up';
+    body = evs.length ? evs.map(e => row(new Date(e.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), esc(e.title))).join('') : '<p class="muted">Nothing in the next 24 hours.</p>';
+    add('Open Google Calendar', () => open('https://calendar.google.com/', '_blank'), true);
+  } else if (kind === 'battery') {
+    const lv = Math.round(battery.level * 100), secs = battery.charging ? battery.chargingTime : battery.dischargingTime;
+    title = `${battery.charging ? '⚡' : '🔋'} Phone battery ${lv}%`;
+    body = row('Status', battery.charging ? 'Charging' : 'On battery')
+      + (isFinite(secs) && secs > 0 ? row(battery.charging ? 'Full in' : 'Lasts about', hm(secs * 1000)) : '')
+      + (!battery.charging ? '<p class="muted">Keep me on a charger and I can stay awake on your desk all day 😴</p>' : '');
+  } else if (kind === 'buddy') {
+    title = `💙 ${esc(b.name)}`;
+    body = row('Personality', PERSONALITY_NAMES[b.personality] || '') + row('Gender', { boy: 'Boy 👦', girl: 'Girl 👧' }[b.gender] || 'Just a robot 🤖')
+      + row('Friendship', `${'▰'.repeat(b.level)}${'▱'.repeat(5 - b.level)} level ${b.level}`) + row('Together', b.days ? `${b.days} day${b.days > 1 ? 's' : ''}` : 'since today')
+      + '<p class="muted">Change its name, gender and personality in the Desk Buddy app on your PC.</p>';
+    add('Say hi 👋', () => { QUIRKS.wave(); speak(3, 'happy'); }, true);
+  } else if (kind === 'running') {
+    title = '⏳ Running now';
+    if (t.end || t.pausedLeft) {
+      body += row('Timer', `${mmss(timerLeft())}${t.pausedLeft ? ' (paused)' : ''}`);
+      add(t.end ? 'Pause timer' : 'Resume timer', () => { if (t.end) { t.pausedLeft = t.end - Date.now(); t.end = 0; } else { t.end = Date.now() + t.pausedLeft; t.pausedLeft = 0; } openSheet('running'); });
+      add('Cancel timer', () => { t.end = t.pausedLeft = 0; t.done = false; openSheet('running'); });
+      add('Show timer', () => startTool('timer'));
+    }
+    if (w.start || w.acc) {
+      body += row('Stopwatch', `${mmss(watchTime())}${w.start ? '' : ' (stopped)'}`);
+      add(w.start ? 'Stop stopwatch' : 'Start stopwatch', () => { if (w.start) { w.acc += Date.now() - w.start; w.start = 0; } else w.start = Date.now(); openSheet('running'); });
+      add('Reset stopwatch', () => { w.start = 0; w.acc = 0; openSheet('running'); });
+    }
+    if (p.end || p.pausedLeft) {
+      body += row(p.phase === 'focus' ? 'Focus' : 'Break', `${mmss(pomoLeft())}${p.pausedLeft ? ' (paused)' : ''}`);
+      add(p.end ? 'Pause focus' : 'Resume focus', () => { if (p.end) { p.pausedLeft = p.end - Date.now(); p.end = 0; } else { p.end = Date.now() + p.pausedLeft; p.pausedLeft = 0; } openSheet('running'); });
+      add('Skip ahead', () => { pomoNext(); openSheet('running'); });
+      add('Stop focus', () => { p.end = p.pausedLeft = 0; p.round = 1; p.phase = 'focus'; openSheet('running'); });
+    }
+    if (micStream) {
+      body += row('Microphone', 'listening for claps 🎙');
+      add('Mic off for now', () => { micWanted = false; stopMic(); openSheet('running'); });
+    }
+    if (!body) body = '<p class="muted">Nothing running. Hold the screen for 2 seconds to open the toolbox.</p>';
+  }
+  $('shTitle').innerHTML = title; $('shBody').innerHTML = body;
+  $('shActions').innerHTML = '';
+  actions.concat([{ label: 'Close', fn: () => {} }]).forEach(a => {
+    const btn = document.createElement('button');
+    btn.textContent = a.label; if (a.main) btn.className = 'main';
+    btn.onclick = () => { const k = sheetKind; a.fn(); if (sheetKind === k && !/^(Pause|Resume|Cancel|Start|Stop|Reset|Skip|Mic)/.test(a.label)) closeSheet(); };
+    $('shActions').appendChild(btn);
+  });
+  sheet.classList.add('on');
+}
+function closeSheet() { sheetKind = null; sheet.classList.remove('on'); }
+sheet.addEventListener('pointerdown', e => { e.stopPropagation(); if (e.target === sheet) closeSheet(); });
+$('hud').addEventListener('pointerdown', e => {
+  const item = e.target.closest('[data-sheet]');
+  if (!item || !item.textContent.trim()) return;
   e.stopPropagation();
-  const b = state.buddy;
-  if (!b) return;
-  const pips = '▰'.repeat(b.level) + '▱'.repeat(5 - b.level);
-  say(`<b>${esc(b.name)}</b> · ${PERSONALITY_NAMES[b.personality] || ''}<br><small>Friendship ${pips} level ${b.level} · ${b.days ? `${b.days} day${b.days > 1 ? 's' : ''} together` : 'met today'}</small>`, 4500, 'happy');
-  setOverride('happy', 1200);
+  if (item.dataset.sheet === 'battery' && !battery) return;
+  if (item.dataset.sheet === 'buddy' && !state.buddy) return;
+  openSheet(item.dataset.sheet); sfx.chirp();
 });
 showSound();
 setInterval(() => {
@@ -1637,6 +1882,9 @@ setInterval(() => {
   if (p.end || p.pausedLeft) running.push(`🍅 ${mmss(pomoLeft())}`);
   if (micStream) running.push('🎙');   // shows whenever the mic is listening
   $('running').textContent = running.join('  ');
+  $('batt').textContent = battery ? `${battery.charging ? '⚡' : '🔋'}${Math.round(battery.level * 100)}%` : '';
+  checkBattery();
+  if (sheetKind === 'running' || sheetKind === 'work') openSheet(sheetKind);   // keep live numbers ticking
 }, 1000);
 
 addEventListener('resize', resize);
