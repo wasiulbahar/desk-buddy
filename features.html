@@ -59,6 +59,8 @@
   .feat button { grid-row: 1 / span 2; grid-column: 2; font: inherit; font-size: 14px; font-weight: 500; color: #00262c;
                  background: var(--cyan); border: 0; border-radius: 10px; padding: 8px 14px; cursor: pointer; white-space: nowrap;
                  transition: transform .15s, box-shadow .15s; }
+  .feat .tries { grid-row: 1 / span 2; grid-column: 2; display: flex; flex-direction: column; gap: 8px; align-self: center; }
+  .feat .tries button { grid-row: auto; }
   .feat button:hover { transform: translateY(-1px); box-shadow: 0 4px 18px rgba(90,240,255,.35); }
   .feat .how { grid-row: 1 / span 2; grid-column: 2; font-size: 13px; color: var(--muted); border: 1px dashed var(--line);
                border-radius: 10px; padding: 6px 10px; white-space: nowrap; }
@@ -89,7 +91,8 @@
   }
   @media (max-width: 520px) {
     .feat { grid-template-columns: 1fr; }
-    .feat button, .feat .how { grid-row: auto; grid-column: 1; justify-self: start; margin-top: 8px; }
+    .feat button, .feat .how, .feat .tries { grid-row: auto; grid-column: 1; justify-self: start; margin-top: 8px; }
+    .feat .tries { flex-direction: row; }
   }
 </style>
 </head>
@@ -123,6 +126,7 @@
       <a href="#cheeky">😈 Cheeky mode</a>
       <a href="#quirks">🤧 Quirks</a>
       <a href="#day">☀️ Your day</a>
+      <a href="#life">🌦️ Weather &amp; life</a>
       <a href="#colors">🎨 Colors</a>
       <a href="#phone">📱 Phone app</a>
       <a href="#windows">💻 Windows app</a>
@@ -280,6 +284,18 @@
         <div class="feat"><h3>Late-night bedtime nudges 🌙</h3><p>After midnight its eyes get droopy, and every 20 minutes it yawns and nudges you: "Bedtime soon? 😴"</p><button data-try="drowsy">Try it</button></div>
       </section>
 
+      <section id="life">
+        <h2><span class="em">🌦️</span>It lives your life with you</h2>
+        <p class="sub">Its world changes with your weather, your day, the season, your holidays and even your pay cycle. Switch each one on or off on the dashboard's Life page.</p>
+        <div class="feat"><h3>Your weather</h3><p>Rain, drizzle, snow, fog, clouds, sunshine or a thunderstorm (with a flinch at the lightning) behind its eyes, matching the real weather in your city. It tells you about it in the morning and notices when it starts raining.</p><span class="tries"><button data-life="rain">Try rain</button><button data-life="snow">Try snow</button></span></div>
+        <div class="feat"><h3>Time of day</h3><p>A soft sunrise glow, bright days, warm sunset colors and a dark sky full of stars and the moon, timed to your real sunrise and sunset.</p><span class="how">Automatic</span></div>
+        <div class="feat"><h3>Seasons</h3><p>Falling leaves in autumn, drifting blossom in spring, and a cosy scarf when it's winter or cold outside. Sunglasses on very hot days.</p><button data-life="autumn">Try autumn</button></div>
+        <div class="feat"><h3>Holidays and your birthday 🎉</h3><p>A party hat, confetti and a little song on your birthday and New Year; a witch hat, pumpkin and bats for Halloween; a moon and lantern for Eid; diyas for Diwali; a Santa hat and tree for Christmas; red lanterns for Lunar New Year.</p><span class="tries"><button data-life="halloween">Try Halloween</button><button data-life="birthday">Try birthday</button></span></div>
+        <div class="feat"><h3>Payday 💸</h3><p>Tell it your payday and it celebrates with sunglasses and money confetti, has a sparkly few days after, and gently cheers you on in the tight days before the next one. Never judgy.</p><button data-life="payday">Try payday</button></div>
+        <div class="feat"><h3>Long meetings</h3><p>After a meeting of 30 minutes or more it gives you a sympathetic "phew".</p><span class="how">Automatic</span></div>
+        <div class="feat"><h3>Everyone gets their own buddy 👥</h3><p>When several people share one PC, each person has a password-protected profile with their own buddy, Gmail and Calendar, settings, learning and history. The password is asked only when you switch, and it also encrypts that person's secrets.</p><span class="how">Dashboard → People</span></div>
+      </section>
+
       <section id="colors">
         <h2><span class="em">🎨</span>What its colors mean</h2>
         <p class="sub">Its eye color tells you how it feels at a glance.</p>
@@ -369,6 +385,19 @@
     if (b) { send({ tool: '' }); send({ mood: b.dataset.try }); }
     if (t) send({ tool: t.dataset.tool });
     if (v) { send({ tool: '' }); send({ voice: v.dataset.voice }); }
+    const l = e.target.closest('button[data-life]');
+    if (l) {   // show a scene for a while, then back to a plain sky
+      const day = { isDay: true, sunrise: 0, sunset: 1439 }, w = (kind, temp) => ({ ...day, kind, temp, feels: temp });
+      const scenes = {
+        rain: { weather: w('rain', 14) }, snow: { weather: w('snow', -3), season: 'winter' },
+        autumn: { weather: w('partly', 16), season: 'autumn' },
+        halloween: { weather: w('cloudy', 12), occasions: [{ key: 'halloween', emoji: '🎃', label: 'Halloween', greeting: 'Happy Halloween! 🎃' }] },
+        birthday: { weather: w('clear', 24), occasions: [{ key: 'birthday', emoji: '🎂', label: 'Your birthday', greeting: 'Happy birthday!! 🎂🎉' }] },
+        payday: { weather: w('clear', 26), money: { phase: 'payday', daysToPayday: 0 } },
+      };
+      send({ tool: '' }); send({ life: scenes[l.dataset.life] });
+      clearTimeout(send.lifeTimer); send.lifeTimer = setTimeout(() => send({ life: null }), 12000);
+    }
   });
 </script>
 </body>

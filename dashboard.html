@@ -55,6 +55,18 @@
   .golink { font-size: 13px; color: var(--cyan); text-decoration: none; border: 1px solid rgba(90,240,255,.35); border-radius: 9px; padding: 5px 10px; white-space: nowrap; }
   .frow.off h3 { color: var(--muted); }
   .frow .sub-setting { grid-column: 2 / 4; display: flex; align-items: center; gap: 12px; font-size: 13.5px; color: var(--muted); }
+  .who { display: flex; align-items: center; gap: 8px; margin: 0 8px 14px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line);
+         background: var(--bg); color: var(--text); font: inherit; font-size: 14px; text-align: left; }
+  .who small { margin-left: auto; color: var(--cyan); font-size: 12px; }
+  .who:hover { border-color: var(--cyan); }
+  #switcher { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; padding: 20px; }
+  #switcher.on { display: flex; }
+  #switcher .box { width: min(560px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 24px; }
+  .sel { font: inherit; color: var(--text); background: var(--bg); border: 1px solid #23343f; border-radius: 10px; padding: 9px 10px; }
+  .person { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .person:first-child { border-top: 0; }
+  .person .em { font-size: 26px; }
+  .person b { flex: 1; }
   .bigtime { font-size: 38px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--cyan); margin-top: 6px; }
   .mchip { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 9px; padding: 5px 11px; }
   .mchip.on { border-color: var(--cyan); color: var(--cyan); }
@@ -178,12 +190,15 @@
 <body>
 <aside>
   <div class="logo"><i></i>Desk Buddy</div>
+  <button class="who" id="who" title="Switch person"><span id="whoEmoji">🙂</span><span id="whoName">Me</span><small>switch</small></button>
   <nav>
     <a href="#home">🏠 Home</a>
     <a href="#buddy">🤖 Buddy</a>
     <a href="#features">🎛️ Features</a>
     <a href="#tools">⏳ Tools</a>
     <a href="#insights">📈 Insights</a>
+    <a href="#life">🌦️ Life</a>
+    <a href="#people">👥 People</a>
     <a href="#sound">🔊 Sound</a>
     <a href="#phone">📱 Phone</a>
     <a href="#cheeky">😈 Cheeky mode</a>
@@ -348,6 +363,52 @@
       <h2>🎵🍿 Music or movie: what I've learned</h2>
       <p class="muted">Correct it from the Home page, or by tapping 🎵/🍿 on the phone. Each correction also teaches it which title words mean music or movie, so it gets better at new titles too.</p>
       <div id="iLearned"></div>
+    </div>
+  </section>
+
+  <!-- LIFE -->
+  <section class="page" id="p-life">
+    <h1>Life 🌦️</h1>
+    <p class="sub">Your buddy's look follows your day: the weather, the time of day, the season, holidays and even your pay cycle.</p>
+    <div class="card"><div id="lifeNow" class="muted">—</div></div>
+    <div class="card"><h2>What it follows</h2><div id="lifeToggles"></div></div>
+    <div class="card">
+      <h2>📍 Your city</h2>
+      <p class="muted" id="cityText">Detected automatically from your internet connection.</p>
+      <div class="row" style="margin-top:10px"><input type="text" id="city" placeholder="Type a city to set it yourself" style="max-width:320px">
+        <button class="btn" id="saveCity">Set city</button><button class="btn ghost" id="autoCity">Detect again</button></div>
+    </div>
+    <div class="card">
+      <h2>💸 Payday</h2>
+      <p class="muted">Just paid: confident and sparkly (sunglasses on payday 😎). The last few days before: gentle and frugal, never judgy.</p>
+      <div class="row" style="margin-top:10px"><select id="payday" class="sel"></select><button class="btn" id="savePayday">Save</button></div>
+    </div>
+    <div class="card">
+      <h2>🎂 Your birthday</h2>
+      <p class="muted">A party hat, confetti and a song on your day.</p>
+      <div class="row" style="margin-top:10px"><select id="bMonth" class="sel"></select><select id="bDay" class="sel"></select><button class="btn" id="saveBday">Save</button></div>
+    </div>
+    <div class="card"><h2>🎉 Holidays it celebrates</h2><p class="muted">Plus New Year and Halloween. Moon-based dates can be a day off locally.</p><div id="holidays"></div></div>
+  </section>
+
+  <!-- PEOPLE -->
+  <section class="page" id="p-people">
+    <h1>People 👥</h1>
+    <p class="sub">Everyone who uses this PC can have their own profile: their own buddy, Gmail and Calendar, settings, and history. Passwords keep each profile private; secrets are encrypted with that password.</p>
+    <div class="card"><h2>On this PC</h2><div id="peopleList"></div></div>
+    <div class="card">
+      <h2>You (<span id="meName"></span>)</h2>
+      <label class="field">Name</label>
+      <div class="row"><input type="text" id="pName" maxlength="24" style="max-width:240px"><select id="pEmoji" class="sel"></select><button class="btn" id="savePName">Save</button></div>
+      <label class="field">Password</label>
+      <div class="row"><input type="password" id="pOld" placeholder="Current password (if you have one)" style="max-width:240px"><input type="password" id="pNew" placeholder="New password (empty = no password)" style="max-width:260px"><button class="btn" id="savePw">Change</button></div>
+    </div>
+    <div class="card">
+      <h2>➕ Add a person</h2>
+      <div class="row"><input type="text" id="aName" placeholder="Their name" maxlength="24" style="max-width:200px"><select id="aEmoji" class="sel"></select>
+        <input type="password" id="aPw" placeholder="Password (4+ characters)" style="max-width:200px"><input type="password" id="aPw2" placeholder="Again" style="max-width:140px">
+        <button class="btn" id="addPerson">Add and switch</button></div>
+      <p class="muted" style="margin-top:8px">They'll get a brand-new buddy with its own name and personality.</p>
     </div>
   </section>
 
@@ -538,6 +599,12 @@
   </div>
 </div>
 
+<div id="switcher"><div class="box">
+  <h2>Who's using Desk Buddy?</h2>
+  <div id="switchList" class="choices" style="grid-template-columns:repeat(auto-fill,minmax(130px,1fr));margin:16px 0"></div>
+  <div id="switchPw" style="display:none" class="row"><input type="password" id="swPw" placeholder="Password" style="max-width:240px"><button class="btn" id="swGo">Switch</button></div>
+  <div class="row" style="margin-top:14px;justify-content:space-between"><a href="#people" class="golink" id="swAdd">➕ Add a person</a><button class="btn ghost" id="swClose">Close</button></div>
+</div></div>
 <div id="toast"></div>
 
 <script>
@@ -714,6 +781,100 @@ function renderNowPlaying() {
   $('#npScopeText').textContent = np.source ? `Remember for everything from ${np.source}` : 'Remember for this title';
 }
 
+// ---------- People: profiles for everyone who uses this PC ----------
+const EMOJIS = ['🙂', '😎', '🦊', '🐼', '🐱', '🐶', '🌸', '⚡', '🎧', '🚀', '🌙', '🍀'];
+let switchTo = null;
+function renderPeople() {
+  const me = S.profile || {};
+  $('#whoEmoji').textContent = me.emoji || '🙂'; $('#whoName').textContent = me.name || 'Me';
+  $('#meName').textContent = me.name || '';
+  if (document.activeElement !== $('#pName')) $('#pName').value = me.name || '';
+  const opts = sel => EMOJIS.map(e => `<option ${e === sel ? 'selected' : ''}>${e}</option>`).join('');
+  $('#pEmoji').innerHTML = opts(me.emoji); if (!$('#aEmoji').innerHTML) $('#aEmoji').innerHTML = opts('🦊');
+  $('#peopleList').innerHTML = S.profiles.map(p => `<div class="person"><span class="em">${p.emoji}</span><b>${esc(p.name)}${p.id === me.id ? ' <small class="muted">(using now)</small>' : ''}</b>
+    <span class="muted">${p.hasPassword ? '🔒 password' : 'no password'}</span>
+    ${p.id === me.id ? '' : `<button class="btn ghost" data-switch="${p.id}">Switch</button>`}
+    ${S.profiles.length > 1 ? `<button class="btn danger" data-delete="${p.id}">Delete</button>` : ''}</div>`).join('');
+  if (me.locked && !$('#switcher').classList.contains('on')) openSwitcher(me.id);
+}
+document.addEventListener('click', async e => {
+  const sw = e.target.closest('[data-switch]'), pick = e.target.closest('[data-pick]'), del = e.target.closest('[data-delete]');
+  if (sw) openSwitcher(sw.dataset.switch);
+  if (pick) choosePerson(pick.dataset.pick);
+  if (del) {
+    const p = S.profiles.find(x => x.id === del.dataset.delete);
+    if (!p || !confirm(`Delete ${p.name}'s profile? Their buddy, accounts and history will be removed from this PC.`)) return;
+    const password = p.hasPassword ? prompt(`${p.name}'s password:`) : '';
+    if (password === null) return;
+    if ((await api('profile', { action: 'delete', id: p.id, password })).ok) load();
+  }
+});
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function openSwitcher(pick) {
+  switchTo = null; $('#switchPw').style.display = 'none'; $('#swPw').value = '';
+  $('#switchList').innerHTML = S.profiles.map(p => `<button class="choice ${p.id === (S.profile || {}).id ? 'on' : ''}" data-pick="${p.id}"><span class="em">${p.emoji}</span><b>${esc(p.name)}</b><small>${p.hasPassword ? '🔒' : ''}</small></button>`).join('');
+  $('#switcher').classList.add('on');
+  if (pick) choosePerson(pick);
+}
+async function choosePerson(id) {
+  const p = S.profiles.find(x => x.id === id);
+  if (!p || (id === S.profile.id && !S.profile.locked)) return;
+  switchTo = id;
+  if (p.hasPassword) { $('#switchPw').style.display = ''; $('#swPw').focus(); }
+  else await doSwitch('');
+}
+async function doSwitch(pw) {
+  const r = await api('profile', { action: 'switch', id: switchTo, password: pw });
+  if (r.ok) { $('#switcher').classList.remove('on'); await load(); }
+}
+$('#who').addEventListener('click', () => openSwitcher());
+$('#swClose').addEventListener('click', () => $('#switcher').classList.remove('on'));
+$('#swAdd').addEventListener('click', () => $('#switcher').classList.remove('on'));
+$('#swGo').addEventListener('click', () => doSwitch($('#swPw').value));
+$('#swPw').addEventListener('keydown', e => { if (e.key === 'Enter') doSwitch($('#swPw').value); });
+$('#savePName').addEventListener('click', async () => { await api('profile', { action: 'rename', name: $('#pName').value, emoji: $('#pEmoji').value }); load(); });
+$('#savePw').addEventListener('click', async () => { const r = await api('profile', { action: 'password', old: $('#pOld').value, new: $('#pNew').value }); if (r.ok) { $('#pOld').value = $('#pNew').value = ''; load(); } });
+$('#addPerson').addEventListener('click', async () => {
+  if ($('#aPw').value !== $('#aPw2').value) return toast("The two passwords don't match", true);
+  const r = await api('profile', { action: 'add', name: $('#aName').value, emoji: $('#aEmoji').value, password: $('#aPw').value });
+  if (r.ok) { ['#aName', '#aPw', '#aPw2'].forEach(s => $(s).value = ''); await load(); location.hash = '#home'; }
+});
+
+// ---------- Life: weather, seasons, holidays, payday, birthday ----------
+const LIFE_TOGGLES = [
+  ['weather', '🌦️ Weather', 'Rain, snow, storms, clouds, sun and stars behind its eyes, and a word about the weather in the morning.'],
+  ['daylight', '🌅 Time of day', 'A soft sunrise glow, bright days, warm evenings and dark starry nights.'],
+  ['seasons', '🍂 Seasons', 'Falling leaves in autumn, blossom in spring, a scarf in winter.'],
+  ['occasions', '🎉 Holidays and your birthday', 'Hats, decorations and greetings on special days.'],
+  ['money', '💸 Payday cycle', 'Follows your pay cycle (set your payday below).'],
+];
+const HOLIDAYS = [['hEid', '🌙 Eid'], ['hChristmas', '🎄 Christmas'], ['hDiwali', '🪔 Diwali'], ['hLunar', '🧧 Lunar New Year']];
+function renderLife() {
+  const p = S.prefs, L = S.life || {}, w = L.weather;
+  $('#lifeToggles').innerHTML = LIFE_TOGGLES.map(([k, t, d]) => `<div class="toggle"><div><h3>${t}</h3><p>${d}</p></div><label class="switch"><input type="checkbox" data-pref="${k}" ${p[k] ? 'checked' : ''}><span></span></label></div>`).join('');
+  $('#holidays').innerHTML = HOLIDAYS.map(([k, t]) => `<div class="toggle"><div><h3>${t}</h3></div><label class="switch"><input type="checkbox" data-pref="${k}" ${p[k] ? 'checked' : ''}><span></span></label></div>`).join('');
+  const kinds = { clear: w && !w.isDay ? 'clear 🌙' : 'clear ☀️', partly: 'partly cloudy ⛅', cloudy: 'cloudy ☁️', fog: 'foggy 🌫️', drizzle: 'drizzle 🌦️', rain: 'rain 🌧️', snow: 'snow ❄️', storm: 'storm ⛈️' };
+  const money = L.money && { payday: 'payday today 💸', flush: 'just got paid ✨', tight: `${L.money.daysToPayday} days to payday 🍜`, normal: `${L.money.daysToPayday} days to payday` }[L.money.phase];
+  $('#lifeNow').innerHTML = [w ? `<b>${esc(L.city || '')}</b> ${w.temp}° (feels ${w.feels}°), ${kinds[w.kind] || w.kind}` : (p.weather ? 'Looking up the weather…' : 'Weather is off'),
+    L.season && L.season !== 'tropical' ? `${{ winter: '❄️', spring: '🌸', summer: '☀️', autumn: '🍂' }[L.season]} ${L.season}` : '',
+    ...(L.occasions || []).map(o => `${o.emoji} ${o.label}`), money || ''].filter(Boolean).join(' · ');
+  $('#cityText').textContent = L.city ? `Using ${L.city}.` : 'Detected automatically from your internet connection.';
+  if (!$('#payday').options.length) {
+    $('#payday').innerHTML = '<option value="0">No payday</option>' + [...Array(31)].map((_, i) => `<option value="${i + 1}">Day ${i + 1} of the month</option>`).join('') + '<option value="99">Last day of the month</option>';
+    $('#bMonth').innerHTML = '<option value="">Month</option>' + [...Array(12)].map((_, i) => `<option value="${String(i + 1).padStart(2, '0')}">${new Date(2000, i, 1).toLocaleString([], { month: 'long' })}</option>`).join('');
+    $('#bDay').innerHTML = '<option value="">Day</option>' + [...Array(31)].map((_, i) => `<option value="${String(i + 1).padStart(2, '0')}">${i + 1}</option>`).join('');
+  }
+  if (document.activeElement !== $('#payday')) $('#payday').value = String(S.payday || 0);
+  if (S.birthday && document.activeElement !== $('#bMonth')) { $('#bMonth').value = S.birthday.slice(0, 2); $('#bDay').value = S.birthday.slice(3); }
+}
+$('#saveCity').addEventListener('click', async () => { await api('life', { city: $('#city').value }); setTimeout(load, 1500); });
+$('#autoCity').addEventListener('click', async () => { $('#city').value = ''; await api('life', { city: '' }); setTimeout(load, 1500); });
+$('#savePayday').addEventListener('click', async () => { await api('life', { payday: +$('#payday').value }); setTimeout(load, 800); });
+$('#saveBday').addEventListener('click', async () => {
+  const m = $('#bMonth').value, d = $('#bDay').value;
+  await api('life', { birthday: m && d ? `${m}-${d}` : '' }); setTimeout(load, 800);
+});
+
 // ---------- the full features list ----------
 function renderFeatures() {
   const p = S.prefs, q = ($('#fSearch').value || '').toLowerCase();
@@ -783,7 +944,7 @@ function renderAll() {
 }
 function renderLive() {
   const on = S.phones > 0;
-  renderTools(); renderNowPlaying();
+  renderTools(); renderNowPlaying(); renderPeople(); renderLife();
   if (location.hash === '#insights' && Date.now() - insightsAt > 15000) loadInsights();
   $('#hello').textContent = `Hi! ${S.buddy.name} is ${on ? 'on your phone 👋' : 'waiting for your phone'}`;
   $('#sideDot').className = 'dot' + (on ? ' on' : '');

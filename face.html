@@ -107,6 +107,7 @@ const DEFAULT_PREFS = {
   soundOutput: 'phone', volume: 80, cheeky: 0, sensors: true, mic: true,
   movie: true, greetings: true, spin: true, toolbox: true, babble: true,
   typing: true, loading: true, offline: true, pcBattery: true, clipboard: true, volumeReact: true, gaming: true, patterns: true,
+  weather: true, daylight: true, seasons: true, occasions: true, money: true, hEid: true, hChristmas: true, hDiwali: true, hLunar: true,
 };
 const P = k => ((state && state.prefs) || DEFAULT_PREFS)[k];
 
@@ -179,9 +180,11 @@ const BED_LINES = ["It's getting late… 🌙", 'Bedtime soon? 😴', 'Your pill
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Saved per person on the PC (each profile has its own greetings, milestones…); the mute switch is per phone.
+const storeKey = k => 'deskbuddy.' + (k === 'sound' ? '' : ((typeof state !== 'undefined' && state && state.profile && state.profile.id) || 'p1') + '.') + k;
 const store = {
-  get: k => { try { return localStorage.getItem('deskbuddy.' + k); } catch (e) { return null; } },
-  set: (k, v) => { try { localStorage.setItem('deskbuddy.' + k, v); } catch (e) {} },
+  get: k => { try { return localStorage.getItem(storeKey(k)); } catch (e) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(storeKey(k), v); } catch (e) {} },
 };
 
 // ---------- voice: soft "buddy-speak" and gentle chimes, made on the fly (no words) ----------
@@ -421,6 +424,14 @@ function onState(s) {
   if (lastCmd === null || newest < lastCmd) lastCmd = newest;   // first look (don't replay old ones), or the PC restarted
   else for (const c of cmds) if (c.n > lastCmd) { lastCmd = c.n; runToolCommand(c); }
   syncSensors();
+  // Someone else switched to their profile on the PC: a new buddy says hello.
+  const pid = s.profile && s.profile.id;
+  if (pid && lastProfileId && pid !== lastProfileId) {
+    lastLevel = +store.get('level') || 0; mailSeq = null; greetAfter = now + 2600;
+    cancelQuirk(); QUIRKS.wave();
+    say(`Hi ${esc(s.profile.name)}! 👋${s.buddy ? `<br><small>I'm ${esc(s.buddy.name)}, your buddy</small>` : ''}`, 3500, 'excited');
+  }
+  if (pid) lastProfileId = pid;
 
   // Add up how far the cursor's direction turns; a few fast circles in a row = dizzy.
   if (Math.hypot(vx, vy) > 0.012) {
@@ -472,7 +483,7 @@ const DEMO_LINES = {
   suspicious: 'Hmm… is this work? 👀', surprised: "Oh! You're back! 👋",
 };
 if (DEMO) {
-  let demo = { x: 0, y: 0 }, demoSongUntil = 0, demoReadUntil = 0, demoMovieUntil = 0;
+  let demo = { x: 0, y: 0 }, demoSongUntil = 0, demoReadUntil = 0, demoMovieUntil = 0, demoLife = null;
   const demoBuddy = { name: params.get('name') || 'Pip', personality: params.get('personality') || 'cheerful',
                       gender: params.get('gender') || 'neutral', level: +params.get('level') || 3, progress: .4, days: 12, awayDays: 0 };
   addEventListener('message', e => {
@@ -488,6 +499,7 @@ if (DEMO) {
       return;
     }
     if (d.gender) { demoBuddy.gender = d.gender; return; }   // dashboard preview of boy / girl / robot
+    if ('life' in d) { demoLife = d.life; return; }   // website demo of weather, seasons and holidays
     if ('tool' in d) { if (TOOLS[d.tool]) startTool(d.tool); else if (tool) endTool(); return; }   // website demo of the tools
     if (!d.mood) return;
     cancelQuirk();
@@ -514,7 +526,7 @@ if (DEMO) {
   const demoBeatT0 = Date.now();
   setInterval(() => {
     const now = performance.now(), song = now < demoSongUntil, movie = now < demoMovieUntil;
-    onState({ ...demo, cpu: 12, ram: 45, idle: 0, work: 12, buddy: demoBuddy, now: Date.now(),
+    onState({ ...demo, cpu: 12, ram: 45, idle: 0, work: 12, buddy: demoBuddy, now: Date.now(), life: demoLife,
               title: now < demoReadUntil ? 'Paper.pdf - Adobe Acrobat' : movie ? 'Big Buck Bunny - Official Trailer - YouTube' : '',
               media: song ? { title: 'Sunny Afternoon', artist: 'The Demo Band', playing: true, app: 'Spotify' }
                    : movie ? { title: 'Big Buck Bunny - Official Trailer', artist: 'Blender', playing: true, app: 'Chrome' } : null,
@@ -558,6 +570,10 @@ const overridden = (m, now = performance.now()) => override && now < override.un
 const lateNight = () => new Date().getHours() < 5;
 
 function onMoodChange(prev, m, now) {
+  if (m === 'meeting') meetingSince = now;
+  if (prev === 'meeting' && meetingSince && now - meetingSince > 30 * 60000 && rateOk('phew', 600000)) {
+    setOverride('aww', 1500); say(`Phew, ${Math.round((now - meetingSince) / 60000)} minutes of meeting 😮‍💨<br><small>get some water?</small>`, 4000, 'calm');
+  }
   if (prev === 'focused' && m !== 'focused' && m !== 'sleepy' && m !== 'sleeping' && focusSince && now - focusSince > 25 * 60000 && friendship() >= 4) {
     QUIRKS.celebrate(); say(`Great focus session! 🎉<br><small>${Math.round((now - focusSince) / 60000)} minutes</small>`, 3500, false);
   }
@@ -587,7 +603,7 @@ function checkGreeting(now) {
   if (store.get('lastDay') === today) return;
   store.set('lastDay', today);
   const events = state.calendar && state.calendar.today;
-  const plan = events ? `<br><small>You have ${events} event${events > 1 ? 's' : ''} today 📅</small>` : '';
+  const plan = (events ? `<br><small>You have ${events} event${events > 1 ? 's' : ''} today 📅</small>` : '') + lifeGreeting();
   if (!store.get('introduced') && b.days === 0) {
     store.set('introduced', '1');
     if (trait().shy) setOverride('bashful', 1500); else QUIRKS.stretch();
@@ -698,7 +714,7 @@ function think(now) {
   if (P('typing') && state.typing >= 1.5 && ['neutral', 'focused', 'groove', 'drowsy'].includes(m)) m = 'typing';
   if (m !== baseMood) { onMoodChange(baseMood, m, now); baseMood = m; }
 
-  if (connected(now)) { checkGreeting(now); checkMedia(now); checkMail(); checkCalendar(); checkBond(); checkSignals(now); checkPatterns(now); }
+  if (connected(now)) { checkGreeting(now); checkMedia(now); checkMail(); checkCalendar(); checkBond(); checkSignals(now); checkPatterns(now); checkLife(now); }
 
   // Break reminder. The PC resets "work" after 5 min away, which also counts as a break.
   if (state.work < breakAck) breakAck = 0;
@@ -993,6 +1009,7 @@ function floaty(text, x, y, size, alpha, color) {
 
 function draw(now, blink) {
   ctx.clearRect(0, 0, W, H);
+  drawEnvironment(now);
   const color = `rgb(${col.map(Math.round)})`;
   ctx.save();
   const rot = Math.sin(now / 180) * .12 * cur.spiral + faceTilt;   // dizzy wobble, or swaying to music
@@ -1026,7 +1043,8 @@ function draw(now, blink) {
       if (g === 'boy') drawBrow(ex, cy, w, h, lid, side, ink);
     }
   }
-  if (g === 'girl' && cur.spiral < .5) drawBow(cx + gap + S * .3, cy - S * cur.h * .5 - S * .13);
+  drawAccessories(cx, cy, gap, now);
+  if (g === 'girl' && cur.spiral < .5 && !has('birthday') && !has('christmas') && !has('halloween') && !has('newyear')) drawBow(cx + gap + S * .3, cy - S * cur.h * .5 - S * .13);
   if (watching) drawPopcorn(now, cx, cy, color);
   if (cur.glasses > .02) drawGlasses(W / 2 + look.x * S * .12, cy, gap, cur.glasses);
   if (sparkle > .05) {   // twinkles around its face
@@ -1340,6 +1358,7 @@ function drawCoin(x, y, flip, side) {
 
 function drawTool(now, blink) {
   ctx.clearRect(0, 0, W, H);
+  drawEnvironment(now);
   const color = `rgb(${TOOLS[tool].color})`, gap = S * .72;
   const cy = H / 2 + bounce * S * .5 + dance.y - (hudOn ? S * .12 : 0), lx = W / 2 - gap, rx = W / 2 + gap, below = cy + S * .74;
   if (musicOn) drawNotes(now, W / 2, cy, gap * 1.15, color);   // the music keeps playing in the background
@@ -1760,6 +1779,217 @@ function drawSpinner(x, y, now, dir, color) {
   ctx.globalAlpha = 1;
 }
 
+// ---------- the world around you: sky, weather, seasons, holidays and payday ----------
+const life = () => state.life || {};
+const rnd = (i, s = 0) => { const x = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return x - Math.floor(x); };   // steady "random" per particle
+const has = key => P('occasions') && (life().occasions || []).some(o => o.key === key);
+function dayPart() {
+  const w = life().weather, m = new Date().getHours() * 60 + new Date().getMinutes();
+  const rise = w ? w.sunrise : 360, set = w ? w.sunset : 1110;
+  if (m < rise - 50 || m > set + 70) return 'night';
+  if (m < rise + 60) return 'dawn';
+  if (m > set - 60) return 'dusk';
+  return 'day';
+}
+let lightningAt = -1e9, nextLightning = 0;
+
+function glow(x, y, r, rgb, a) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, `rgba(${rgb},${a})`); g.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+// Everything behind the eyes. Kept soft and dark so the face always stays the star.
+function drawEnvironment(now) {
+  const L = life(), w = P('weather') ? L.weather : null, part = P('daylight') ? dayPart() : null;
+  ctx.save();
+  if (part === 'dawn') glow(W / 2, H * 1.1, Math.max(W, H) * .9, '255,150,120', .17);
+  if (part === 'day') glow(W / 2, -H * .1, Math.max(W, H) * .9, '90,170,255', .08);
+  if (part === 'dusk') glow(W / 2, H * 1.1, Math.max(W, H) * .9, '255,150,70', .16);
+  if (part === 'night') glow(W / 2, -H * .1, Math.max(W, H) * .9, '40,60,150', .17);
+  const clearSky = !w || ['clear', 'partly'].includes(w.kind);
+  if (part === 'night' && clearSky) {   // stars and a crescent moon
+    for (let i = 0; i < 40; i++) {
+      const tw = .3 + .7 * Math.abs(Math.sin(now / (900 + rnd(i, 3) * 1500) + i));
+      ctx.globalAlpha = .55 * tw; ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(rnd(i, 1) * W, rnd(i, 2) * H * .55, .6 + rnd(i, 4) * 1.3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = .55; ctx.fillStyle = 'rgb(250,240,200)';
+    ctx.beginPath(); ctx.arc(W * .09, H * .14, S * .13, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath(); ctx.arc(W * .09 + S * .06, H * .14 - S * .03, S * .12, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  } else if (w && clearSky && part && part !== 'night') {   // a warm sun in the corner
+    glow(W * .07, H * .1, S * .9, '255,210,110', .22);
+    ctx.globalAlpha = .12; ctx.strokeStyle = 'rgb(255,215,120)'; ctx.lineWidth = 3;
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * Math.PI * 2 + now / 9000;
+      ctx.beginPath(); ctx.moveTo(W * .07 + Math.cos(a) * S * .3, H * .1 + Math.sin(a) * S * .3);
+      ctx.lineTo(W * .07 + Math.cos(a) * S * .55, H * .1 + Math.sin(a) * S * .55); ctx.stroke();
+    }
+  }
+  if (w) {
+    const clouds = { partly: 2, cloudy: 4, fog: 3, drizzle: 4, rain: 5, snow: 4, storm: 6 }[w.kind] || 0;
+    for (let i = 0; i < clouds; i++) {   // soft clouds drifting along the top
+      const x = ((rnd(i, 5) * W + now / (60 + rnd(i, 6) * 60)) % (W + S * 2)) - S, y = H * (.04 + rnd(i, 7) * .14);
+      const shade = w.kind === 'storm' ? '120,125,150' : '200,215,230';
+      for (let j = 0; j < 3; j++) glow(x + j * S * .35, y + (j % 2) * S * .08, S * .45, shade, w.kind === 'storm' ? .14 : .09);
+    }
+    if (w.kind === 'fog') for (let i = 0; i < 4; i++) glow(W * (i + .5) / 4 + Math.sin(now / 5000 + i) * S, H * (.35 + i * .12), S * 1.6, '190,200,210', .07);
+    if (['rain', 'drizzle', 'storm'].includes(w.kind)) {
+      const n = w.kind === 'drizzle' ? 25 : w.kind === 'storm' ? 75 : 55;
+      ctx.globalAlpha = .32; ctx.strokeStyle = 'rgb(150,190,255)'; ctx.lineWidth = 1.2;
+      for (let i = 0; i < n; i++) {
+        const speed = .45 + rnd(i, 8) * .35, x = rnd(i, 9) * (W + 60) - 30, y = ((now * speed + rnd(i, 10) * H * 3) % (H + 40)) - 20;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 5, y + 16); ctx.stroke();
+      }
+    }
+    if (w.kind === 'snow') {
+      ctx.fillStyle = '#fff';
+      for (let i = 0; i < 50; i++) {
+        const y = ((now * (.03 + rnd(i, 11) * .04) + rnd(i, 12) * H * 2) % (H + 10)) - 5;
+        const x = rnd(i, 13) * W + Math.sin(now / 1200 + i) * 12;
+        ctx.globalAlpha = .45 + rnd(i, 14) * .4;
+        ctx.beginPath(); ctx.arc(x, y, 1.4 + rnd(i, 15) * 2.2, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    if (w.kind === 'storm' && now > nextLightning) {   // lightning: a flash, and it flinches
+      nextLightning = now + 6000 + Math.random() * 10000; lightningAt = now;
+      if (!tool && !overridden()) { setOverride('surprised', 600); bounceV = 4; }
+    }
+  }
+  if (P('seasons') && (!w || !['rain', 'storm', 'snow'].includes(w.kind))) {
+    const kind = L.season === 'autumn' ? 'leaf' : L.season === 'spring' ? 'petal' : null;
+    for (let i = 0; kind && i < 7; i++) {   // falling leaves or blossom petals
+      const y = ((now * (.02 + rnd(i, 16) * .025) + rnd(i, 17) * H * 2) % (H + 30)) - 15;
+      const x = rnd(i, 18) * W + Math.sin(now / 1500 + i * 2) * 30;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(now / 900 + i);
+      ctx.globalAlpha = .5; ctx.fillStyle = kind === 'leaf' ? ['rgb(230,120,40)', 'rgb(200,80,40)', 'rgb(230,170,60)'][i % 3] : 'rgb(255,180,210)';
+      ctx.beginPath(); ctx.ellipse(0, 0, S * (kind === 'leaf' ? .05 : .03), S * (kind === 'leaf' ? .025 : .02), 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+  // Holiday decorations around the edges.
+  const deco = (txt, x, y, size, a = .75) => floaty(txt, x, y, size, a, '#fff');
+  if (has('halloween')) {
+    deco('🎃', W * .07, H * .9, S * .4, .85);
+    for (let i = 0; i < 2; i++) deco('🦇', (now / (40 + i * 25) + i * W * .5) % (W + 80) - 40, H * (.12 + i * .1) + Math.sin(now / 300 + i) * 10, S * .22, .6);
+  }
+  if (has('diwali')) for (let i = 0; i < 5; i++) {
+    const x = W * (.1 + i * .2);
+    glow(x, H * .93, S * .25, '255,180,60', .22 + .08 * Math.sin(now / 150 + i * 2)); deco('🪔', x, H * .96, S * .2, .9);
+  }
+  if (has('eid')) { glow(W * .9, H * .14, S * .5, '255,230,150', .15); deco('🌙', W * .9, H * .2, S * .32); deco('🏮', W * .08, H * .3 + Math.sin(now / 900) * 6, S * .26); }
+  if (has('lunar')) for (let i = 0; i < 2; i++) deco('🏮', W * (.08 + i * .84), H * .28 + Math.sin(now / 700 + i) * 8, S * .3);
+  if (has('christmas')) deco('🎄', W * .07, H * .9, S * .38);
+  const confetti = has('birthday') || has('newyear') || has('newyeareve');
+  const m = P('money') ? L.money : null;
+  if (confetti || (m && m.phase === 'payday')) {
+    for (let i = 0; i < 26; i++) {
+      const y = ((now * (.05 + rnd(i, 19) * .05) + rnd(i, 20) * H * 2) % (H + 20)) - 10, x = rnd(i, 21) * W + Math.sin(now / 600 + i) * 15;
+      if (!confetti) { deco('💸', x, y, S * .16, .45); continue; }   // payday: a little money rain
+      ctx.save(); ctx.translate(x, y); ctx.rotate(now / 300 + i); ctx.globalAlpha = .7;
+      ctx.fillStyle = ['#ff6eaf', '#5af0ff', '#ffd166', '#7dff9b', '#b48cff'][i % 5]; ctx.fillRect(-4, -2, 8, 4); ctx.restore();
+    }
+  }
+  if (has('birthday')) deco('🎂', W * .93, H * .9, S * .36);
+  ctx.restore();
+}
+
+// Hats, sunglasses and a scarf, worn on its face.
+function drawAccessories(cx, cy, gap, now) {
+  const w = P('weather') ? life().weather : null, m = P('money') ? life().money : null, part = dayPart();
+  const eyeTop = cy - S * cur.h * .5;
+  if (has('birthday') || has('newyear') || has('newyeareve')) drawHat(cx + gap * .9, eyeTop - S * .02, 'party', now);
+  else if (has('christmas')) drawHat(cx + gap * .9, eyeTop - S * .02, 'santa', now);
+  else if (has('halloween')) drawHat(cx + gap * .85, eyeTop - S * .02, 'witch', now);
+  const sunny = w && w.kind === 'clear' && w.feels >= 30 && part === 'day';
+  if (((m && m.phase === 'payday') || sunny) && mood !== 'reading' && mood !== 'sleeping' && cur.spiral < .5) {
+    for (const side of [-1, 1]) {   // cool sunglasses
+      const ex = cx + side * gap, w2 = S * .86, h2 = S * .5;
+      ctx.fillStyle = 'rgba(8,10,16,.88)'; roundRect(ex - w2 / 2, cy - h2 * .7, w2, h2, S * .16); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = S * .025;
+      ctx.beginPath(); ctx.moveTo(ex - w2 * .3, cy - h2 * .45); ctx.lineTo(ex - w2 * .1, cy - h2 * .1); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(8,10,16,.9)'; ctx.lineWidth = S * .05;
+    ctx.beginPath(); ctx.moveTo(cx - gap + S * .43, cy - S * .2); ctx.lineTo(cx + gap - S * .43, cy - S * .2); ctx.stroke();
+  }
+  if (P('seasons') && (life().season === 'winter' || (w && w.feels <= 5))) {   // a cozy striped scarf
+    const y = cy + S * .66, x0 = cx - gap * 1.25, bw = gap * 2.5;
+    ctx.save(); roundRect(x0, y, bw, S * .15, S * .07); ctx.clip();
+    for (let i = 0; i < 12; i++) { ctx.fillStyle = i % 2 ? 'rgb(240,240,245)' : 'rgb(220,60,70)'; ctx.fillRect(x0 + i * bw / 12, y, bw / 12, S * .15); }
+    ctx.restore();
+    ctx.fillStyle = 'rgb(220,60,70)'; roundRect(cx + gap * .7, y + S * .08, S * .14, S * .32 + Math.sin(now / 500) * S * .02, S * .05); ctx.fill();
+  }
+}
+
+function drawHat(x, y, kind, now) {
+  const s = S * .55;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(.22 + Math.sin(now / 900) * .04);
+  if (kind === 'party') {
+    ctx.beginPath(); ctx.moveTo(-s * .45, 0); ctx.lineTo(s * .45, 0); ctx.lineTo(0, -s); ctx.closePath(); ctx.save(); ctx.clip();
+    for (let i = 0; i < 6; i++) { ctx.fillStyle = ['#ff6eaf', '#5af0ff', '#ffd166'][i % 3]; ctx.fillRect(-s, -s + i * s / 5.5, s * 2, s / 5.5); }
+    ctx.restore(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -s, s * .1, 0, Math.PI * 2); ctx.fill();
+  } else if (kind === 'santa') {
+    ctx.fillStyle = 'rgb(215,40,50)';
+    ctx.beginPath(); ctx.moveTo(-s * .45, 0); ctx.quadraticCurveTo(-s * .1, -s * 1.1, s * .55, -s * .55); ctx.lineTo(s * .45, 0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff'; roundRect(-s * .55, -s * .1, s * 1.1, s * .22, s * .1); ctx.fill();
+    ctx.beginPath(); ctx.arc(s * .58, -s * .55, s * .12, 0, Math.PI * 2); ctx.fill();
+  } else {   // witch
+    ctx.fillStyle = 'rgb(70,40,110)';
+    ctx.beginPath(); ctx.ellipse(0, 0, s * .7, s * .13, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-s * .35, 0); ctx.lineTo(s * .35, 0); ctx.quadraticCurveTo(s * .1, -s * .7, s * .3, -s * 1.05); ctx.quadraticCurveTo(-s * .15, -s * .6, -s * .35, 0); ctx.fill();
+    ctx.fillStyle = 'rgb(255,150,40)'; ctx.fillRect(-s * .33, -s * .16, s * .66, s * .1);
+  }
+  ctx.restore();
+}
+
+// What it says about your day: holidays, payday cycle, weather changes and long meetings.
+let lastWeatherKind = null, meetingSince = 0, lastProfileId = null;
+function checkLife(now) {
+  const L = life(), today = new Date().toDateString();
+  if (!greetAfter && state.idle < 60 && !tool && !overridden()) {   // after the morning hello
+    for (const o of (P('occasions') ? L.occasions || [] : [])) {
+      if (store.get('occ.' + o.key) === today) continue;
+      store.set('occ.' + o.key, today);
+      sparkleUntil = now + 3000; setOverride('love', 3000); bounceV = -5;
+      if (o.key === 'birthday') [523, 523, 587, 523, 698, 659].forEach((f, i) => pluck(f, i * .32, .06, .7));   // 🎵 happy birthday
+      say(o.greeting || `${o.emoji || '🎉'} ${o.label || 'A special day'}!`, 4500, o.key === 'birthday' ? false : 'excited');
+      return;
+    }
+    const m = P('money') ? L.money : null;
+    if (m && m.phase !== 'normal' && store.get('money') !== today) {
+      store.set('money', today);
+      if (m.phase === 'payday') { setOverride('love', 2500); showIcon('💸', 3000); say('Payday! 💸 You earned it.', 3500, 'excited'); }
+      else if (m.phase === 'flush') say(pick(['Payday glow ✨ treat yourself a little?', 'Fresh pay, fresh start ✨']), 3500, 'happy');
+      else { setOverride('aww', 1200); say(pick([`Payday in ${m.daysToPayday} day${m.daysToPayday > 1 ? 's' : ''} 💸 hang in there`, 'Instant noodles week? 🍜 You\'ve got this', 'Budget mode on 🧮 doing great']), 3800, 'calm'); }
+      return;
+    }
+  }
+  const w = P('weather') ? L.weather : null;
+  if (w && lastWeatherKind && w.kind !== lastWeatherKind && !tool) {
+    if (['rain', 'storm'].includes(w.kind) && !['rain', 'storm', 'drizzle'].includes(lastWeatherKind)) say(w.kind === 'storm' ? 'A storm is rolling in ⛈️ stay cozy' : 'It started raining ☔', 3000, 'calm');
+    if (w.kind === 'snow') say("It's snowing! ❄️", 3000, 'excited');
+    if (w.kind === 'clear' && ['rain', 'storm', 'drizzle'].includes(lastWeatherKind)) say('The rain stopped ☀️', 2500, 'happy');
+  }
+  if (w) lastWeatherKind = w.kind;
+}
+// A line about today's weather and schedule, added to the morning greeting.
+function lifeGreeting() {
+  const L = life(), w = P('weather') ? L.weather : null, lines = [];
+  if (w) {
+    if (w.kind === 'rain' || w.kind === 'drizzle') lines.push('Rainy day ☔ grab an umbrella');
+    else if (w.kind === 'storm') lines.push('Stormy out there ⛈️ stay cozy');
+    else if (w.kind === 'snow') lines.push('Snow today ❄️ stay warm');
+    else if (w.feels >= 32) lines.push(`${w.temp}° out, stay hydrated 💧`);
+    else if (w.feels <= 3) lines.push(`Brr, ${w.temp}° 🧣 wrap up`);
+    else lines.push(`${w.temp}° and ${({ clear: 'sunny ☀️', partly: 'a bit cloudy ⛅', cloudy: 'cloudy ☁️', fog: 'foggy 🌫️' })[w.kind] || 'nice'}`);
+  }
+  const n = state.calendar && state.calendar.today;
+  if (n >= 4) lines.push(`Big day: ${n} events. You've got this 💪`);
+  return lines.length ? `<br><small>${lines.join(' · ')}</small>` : '';
+}
+
 // ---------- main loop ----------
 let last = performance.now();
 function frame(now) {
@@ -1826,6 +2056,9 @@ function frame(now) {
 
   if (tool) drawTool(now, blink); else draw(now, blink);
   drawHoldRing(now);
+  if (now - lightningAt < 260) {   // lightning
+    ctx.fillStyle = `rgba(220,230,255,${(1 - (now - lightningAt) / 260) * .45})`; ctx.fillRect(0, 0, W, H);
+  }
   if (now < flashUntil) {   // screenshot: camera flash
     ctx.fillStyle = `rgba(255,255,255,${(flashUntil - now) / 260 * .85})`; ctx.fillRect(0, 0, W, H);
   }

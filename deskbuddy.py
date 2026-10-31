@@ -13,6 +13,8 @@ import base64
 import ctypes
 import datetime
 import email
+import hashlib
+import hmac
 import html
 import imaplib
 import io
@@ -21,6 +23,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import socket
 import ssl
@@ -41,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import brain
 
 APP_NAME = "Desk Buddy"
-VERSION = "2.2"
+VERSION = "2.3"
 PORT = int(os.environ.get("DESKBUDDY_PORT", 8765))
 HTTPS_PORT = PORT + 1     # the secure link, needed for the phone's motion sensors and microphone
 FPS = 15                  # how often the phone gets cursor updates
@@ -58,10 +61,8 @@ UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\DeskBuddy"
 FIREWALL_RULE = "DeskBuddy"
 NO_WINDOW = 0x08000000
 DATA_DIR = os.path.join(os.environ["APPDATA"], "DeskBuddy")   # settings and friendship progress
-CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 CERT_FILE = os.path.join(DATA_DIR, "phone-link.crt")
 KEY_FILE = os.path.join(DATA_DIR, "phone-link.key")
-BUDDY_FILE = os.path.join(DATA_DIR, "buddy.json")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -204,10 +205,19 @@ def cursor_position():
 stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0,
          "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0, "backspaces": 0,
          "beat": None, "mediaKind": None, "activity": None, "day": None, "typing": 0, "busy": False, "online": True,
-         "pcBattery": None, "clip": None, "volume": None, "fullscreen": False, "cmd": None}
+         "pcBattery": None, "clip": None, "volume": None, "fullscreen": False, "cmd": None, "profile": None,
+         "life": None}
 
 
-# ---------- saved files: settings (secrets encrypted by Windows) and friendship ----------
+# ---------- saved files, and the people who use this PC ----------
+# Each person has a profile folder: their buddy, settings, Google accounts, what it learned and their
+# work history. A profile can have a password; its secrets are then encrypted with a key made from that
+# password, so nobody else using this PC can read them.
+
+PROFILES_FILE = os.path.join(DATA_DIR, "profiles.json")
+PROFILE_ROOT = os.path.join(DATA_DIR, "profiles")
+PROFILE_FILES = ("config.json", "buddy.json", "learned.json", "activity.json")
+
 
 def load_json(path, default):
     try:
@@ -218,7 +228,7 @@ def load_json(path, default):
 
 
 def save_json(path, data):
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
@@ -241,19 +251,75 @@ def _dpapi(func, data):
         kernel32.LocalFree(ctypes.cast(blob_out.pbData, ctypes.c_void_p))
 
 
-def protect(text):
+def windows_lock(data):
     """Encrypt with Windows (DPAPI): only this Windows user on this PC can read it back."""
-    return base64.b64encode(_dpapi(ctypes.windll.crypt32.CryptProtectData, text.encode())).decode() if text else ""
+    return base64.b64encode(_dpapi(ctypes.windll.crypt32.CryptProtectData, data)).decode()
 
 
-def unprotect(b64):
+def windows_unlock(b64):
     try:
-        return _dpapi(ctypes.windll.crypt32.CryptUnprotectData, base64.b64decode(b64)).decode() if b64 else ""
+        return _dpapi(ctypes.windll.crypt32.CryptUnprotectData, base64.b64decode(b64))
     except (OSError, ValueError):
+        return None
+
+
+profile_key = None   # the active person's password-derived key (None: no password, Windows encryption only)
+
+
+def protect(text):
+    """Encrypt a secret (App Password, calendar link) for the active person."""
+    if not text:
+        return ""
+    if profile_key:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        nonce = os.urandom(12)
+        return "pw:" + base64.b64encode(nonce + AESGCM(profile_key).encrypt(nonce, text.encode(), None)).decode()
+    return windows_lock(text.encode())
+
+
+def unprotect(blob):
+    try:
+        if not blob:
+            return ""
+        if blob.startswith("pw:"):
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            raw = base64.b64decode(blob[3:])
+            return AESGCM(profile_key).decrypt(raw[:12], raw[12:], None).decode() if profile_key else ""
+        data = windows_unlock(blob)
+        return data.decode() if data else ""
+    except Exception:
         return ""
 
 
-config = load_json(CONFIG_FILE, {"gmail_user": "", "gmail_password": "", "calendar_url": "", "onboarded": False})
+def derive(password, salt, purpose):
+    """Slow on purpose (200,000 rounds), so passwords can't be guessed quickly."""
+    return hashlib.pbkdf2_hmac("sha256", f"{purpose}:{password}".encode(), base64.b64decode(salt), 200_000)
+
+
+def check_password(entry, password):
+    if not entry.get("check"):
+        return True   # this person chose no password
+    return hmac.compare_digest(base64.b64encode(derive(password, entry["salt"], "check")).decode(), entry["check"])
+
+
+profiles = load_json(PROFILES_FILE, {"active": "", "list": [], "keys": {}})
+if not profiles["list"]:   # first run, or upgrading from single-person Desk Buddy: that becomes the first profile
+    first = os.path.join(PROFILE_ROOT, "p1")
+    os.makedirs(first, exist_ok=True)
+    for _name in PROFILE_FILES:
+        if os.path.exists(os.path.join(DATA_DIR, _name)):
+            shutil.move(os.path.join(DATA_DIR, _name), os.path.join(first, _name))
+    profiles.update(active="p1", keys={}, list=[{"id": "p1", "name": "Me", "emoji": "🙂",
+                                                "salt": base64.b64encode(os.urandom(16)).decode(), "check": ""}])
+    save_json(PROFILES_FILE, profiles)
+
+
+def profile_entry(pid):
+    return next((p for p in profiles["list"] if p["id"] == pid), None)
+
+
+DEFAULT_CONFIG = {"gmail_user": "", "gmail_password": "", "calendar_url": "", "onboarded": False,
+                  "payday": 0, "birthday": ""}
 
 # Everything the dashboard can switch on and off. Sent to the phone, so changes apply instantly.
 DEFAULT_PREFS = {
@@ -263,10 +329,13 @@ DEFAULT_PREFS = {
     "movie": True, "greetings": True, "spin": True, "toolbox": True, "babble": True,
     "typing": True, "loading": True, "offline": True, "pcBattery": True, "clipboard": True, "volumeReact": True,
     "gaming": True, "patterns": True,
+    "weather": True, "daylight": True, "seasons": True, "occasions": True, "money": True,
+    "hEid": True, "hChristmas": True, "hDiwali": True, "hLunar": True,
 }
 PREF_CHOICES = {"soundOutput": ("phone", "pc", "both", "off")}
 PREF_RANGES = {"breakMinutes": (10, 180), "volume": (0, 100), "cheeky": (0, 3)}
-prefs = {**DEFAULT_PREFS, **config.get("prefs", {})}
+config, prefs, buddy = {}, {}, {}   # the active person's (filled in by load_profile)
+CONFIG_FILE = BUDDY_FILE = ""
 
 
 def update_prefs(changes):
@@ -285,6 +354,8 @@ def update_prefs(changes):
     config["prefs"] = prefs
     save_json(CONFIG_FILE, config)
     stats["prefs"] = dict(prefs)
+
+
 services = {"gmail": "Not set up", "calendar": "Not set up"}   # status lines for the settings page
 wake_mail, wake_calendar = threading.Event(), threading.Event()
 
@@ -298,19 +369,61 @@ NAMES = {"boy": ["Bolt", "Pip", "Biscuit", "Pixel", "Bean", "Blip", "Rusty", "Zi
 LEVELS = [0, 40, 120, 260, 480]          # points needed for friendship levels 1-5
 POINTS = {"day": 10, "time": 1, "pet": 1, "break": 5}
 DAILY_CAP = {"time": 30, "pet": 15, "break": 15}
-buddy = load_json(BUDDY_FILE, {})
-if buddy.get("personality") not in PERSONALITIES:   # first run: a brand-new buddy is born
-    _gender = random.choice(list(GENDERS))
-    buddy = {"name": random.choice(NAMES[_gender]), "gender": _gender, "personality": random.choice(list(PERSONALITIES)),
-             "points": 0, "met": datetime.date.today().isoformat(), "lastDay": "", "awayDays": 0, "todayDate": "", "today": {}}
-    save_json(BUDDY_FILE, buddy)
-buddy.setdefault("gender", "neutral")   # buddies born before genders existed
 bond_lock = threading.Lock()
-stats["prefs"] = dict(prefs)
+learner = tracker = None
+profile_gen = 0   # goes up on every switch, so background checks (like Gmail) start fresh
 
-# Learning: what counts as music vs movie (from your corrections), and your work pattern.
-learner = brain.MediaLearner(os.path.join(DATA_DIR, "learned.json"))
-tracker = brain.ActivityTracker(os.path.join(DATA_DIR, "activity.json"))
+
+def born_buddy():
+    gender = random.choice(list(GENDERS))
+    return {"name": random.choice(NAMES[gender]), "gender": gender, "personality": random.choice(list(PERSONALITIES)),
+            "points": 0, "met": datetime.date.today().isoformat(), "lastDay": "", "awayDays": 0, "todayDate": "", "today": {}}
+
+
+def load_profile(pid, key):
+    """Make pid the active person: their buddy, accounts, settings, learning and history."""
+    global CONFIG_FILE, BUDDY_FILE, learner, tracker, profile_key, profile_gen
+    if tracker:
+        with tracker.lock:
+            tracker._save()
+    folder = os.path.join(PROFILE_ROOT, pid)
+    CONFIG_FILE, BUDDY_FILE = os.path.join(folder, "config.json"), os.path.join(folder, "buddy.json")
+    profile_key = key
+    config.clear()
+    config.update(load_json(CONFIG_FILE, DEFAULT_CONFIG))
+    prefs.clear()
+    prefs.update({**DEFAULT_PREFS, **config.get("prefs", {})})
+    fresh = load_json(BUDDY_FILE, {})
+    if fresh.get("personality") not in PERSONALITIES:   # a brand-new buddy is born
+        fresh = born_buddy()
+        save_json(BUDDY_FILE, fresh)
+    fresh.setdefault("gender", "neutral")   # buddies born before genders existed
+    with bond_lock:
+        buddy.clear()
+        buddy.update(fresh)
+    learner = brain.MediaLearner(os.path.join(folder, "learned.json"))
+    tracker = brain.ActivityTracker(os.path.join(folder, "activity.json"))
+    profiles["active"] = pid
+    profiles["keys"] = {pid: windows_lock(key)} if key else {}   # so a restart doesn't ask again (it locks only on switching)
+    save_json(PROFILES_FILE, profiles)
+    profile_gen += 1
+    entry = profile_entry(pid)
+    stats.update(prefs=dict(prefs), mail=None, calendar=None, day=None, activity=None,
+                 profile={"id": pid, "name": entry["name"], "emoji": entry["emoji"], "locked": bool(entry["check"]) and not key})
+    services.update(gmail="Checking…" if config["gmail_user"] else "Not set up", calendar="Checking…" if config["calendar_url"] else "Not set up")
+    wake_mail.set()
+    wake_calendar.set()
+    if "wake_life" in globals():
+        wake_life.set()   # their own payday, birthday and holidays
+
+
+def _startup_profile():
+    pid = profiles["active"] if profile_entry(profiles["active"]) else profiles["list"][0]["id"]
+    cached = profiles.get("keys", {}).get(pid)
+    load_profile(pid, windows_unlock(cached) if cached else None)
+
+
+_startup_profile()
 
 
 def add_points(kind):
@@ -409,8 +522,10 @@ def check_gmail(user, password, last_uid):
 
 
 def mail_loop():
-    last_uid, seq = None, 0
+    last_uid, seq, gen = None, 0, profile_gen
     while True:
+        if gen != profile_gen:   # someone else's inbox now: start fresh
+            last_uid, gen = None, profile_gen
         user, password = config["gmail_user"], unprotect(config["gmail_password"])
         if user and password:
             try:
@@ -925,6 +1040,94 @@ def start_secure_server():
 phone_caps = {"secure": False, "motion": "off", "mic": "off", "at": 0}
 
 
+LOCATION_FILE = os.path.join(DATA_DIR, "location.json")
+wake_life = threading.Event()
+
+
+def web_context():
+    """Some Windows installs carry expired root certificates, so prefer certifi's fresh bundle."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+def fetch_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": f"DeskBuddy/{VERSION}"})
+    with urllib.request.urlopen(req, timeout=15, context=web_context()) as r:
+        return json.loads(r.read().decode())
+
+
+def find_location(city=None):
+    """Your city: typed in the dashboard, or guessed once a day from your internet connection (ipwho.is)."""
+    if city:
+        hit = (fetch_json("https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(city)).get("results") or [None])[0]
+        if not hit:
+            raise ValueError(f"Couldn't find {city}")
+        return {"lat": hit["latitude"], "lon": hit["longitude"], "city": hit["name"], "manual": True, "at": time.time()}
+    data = fetch_json("https://ipwho.is/")
+    if not data.get("success"):
+        return None
+    return {"lat": data["latitude"], "lon": data["longitude"], "city": data.get("city", ""), "manual": False, "at": time.time()}
+
+
+def fetch_weather(loc):
+    """Current weather from Open-Meteo (free, no account): only your city's coordinates are sent."""
+    w = fetch_json(f"https://api.open-meteo.com/v1/forecast?latitude={loc['lat']}&longitude={loc['lon']}"
+                   "&current=temperature_2m,apparent_temperature,weather_code,is_day,wind_speed_10m"
+                   "&daily=sunrise,sunset&timezone=auto&forecast_days=1")
+    cur, daily = w["current"], w["daily"]
+    minutes = lambda iso: int(iso[11:13]) * 60 + int(iso[14:16])
+    return {"kind": brain.weather_kind(cur["weather_code"]), "code": cur["weather_code"], "temp": round(cur["temperature_2m"]),
+            "feels": round(cur["apparent_temperature"]), "wind": round(cur["wind_speed_10m"]), "isDay": bool(cur["is_day"]),
+            "sunrise": minutes(daily["sunrise"][0]), "sunset": minutes(daily["sunset"][0]), "at": time.time()}
+
+
+def life_loop():
+    """Weather, season, holidays and the money cycle, so the buddy can feel the day with you."""
+    loc, weather = load_json(LOCATION_FILE, {}) or None, None
+    while True:
+        try:
+            if prefs["weather"]:
+                if not loc or (not loc.get("manual") and time.time() - loc.get("at", 0) > 86400):
+                    loc = find_location() or loc
+                    if loc:
+                        save_json(LOCATION_FILE, loc)
+                if loc and (not weather or time.time() - weather["at"] > 1200):
+                    weather = fetch_weather(loc)
+        except Exception:
+            pass   # offline: keep what we had
+        if os.path.exists(LOCATION_FILE):
+            loc = load_json(LOCATION_FILE, {}) or loc   # the dashboard may have changed the city
+        stats["life"] = brain.life_context(datetime.date.today(), prefs, config, loc, weather)
+        if wake_life.wait(60):
+            wake_life.clear()
+            if loc and time.time() - loc.get("at", 0) < 5:
+                weather = None   # a new city: fetch its weather now
+
+
+def api_life(data):
+    """Payday, birthday and city (from the dashboard's Life page)."""
+    if "payday" in data:
+        day = int(data["payday"] or 0)
+        config["payday"] = 99 if day >= 99 else max(0, min(31, day))
+    if "birthday" in data:
+        bday = str(data["birthday"] or "").strip()
+        if bday and not re.fullmatch(r"(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])", bday):
+            raise ValueError("Birthday should look like MM-DD, e.g. 03-27")
+        config["birthday"] = bday
+    save_json(CONFIG_FILE, config)
+    if "city" in data:
+        city = str(data["city"] or "").strip()
+        try:
+            save_json(LOCATION_FILE, find_location(city) if city else (find_location() or {}))
+        except OSError:
+            raise ValueError("Couldn't look up that city right now")
+    wake_life.set()
+    return "Saved"
+
+
 TYPING_KEYS = [0x20] + list(range(0x30, 0x3A)) + list(range(0x41, 0x5B)) + [0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xDE]
 
 
@@ -1022,7 +1225,7 @@ def live_status():
     return {"phones": phones, "buddy": buddy_info(), "phoneCaps": caps, **services,
             "tools": phone_tools["state"] if now - phone_tools["at"] < 5 else None,
             "nowPlaying": {**(stats["mediaKind"] or {}), "playing": bool(media.get("playing"))} if media else None,
-            "activity": stats["activity"]}
+            "activity": stats["activity"], "profile": stats["profile"], "profiles": profile_list(), "life": stats["life"]}
 
 
 def teach_media(data):
@@ -1059,6 +1262,78 @@ def api_tool(data):
     return "Sent to your phone"
 
 
+def profile_list():
+    return [{"id": p["id"], "name": p["name"], "emoji": p["emoji"], "hasPassword": bool(p["check"])} for p in profiles["list"]]
+
+
+def api_profile(data):
+    """Switch, add, rename, change the password of, or delete a person's profile."""
+    action, active = data.get("action"), profile_entry(profiles["active"])
+    password = str(data.get("password", ""))
+    if action == "switch":
+        entry = profile_entry(data.get("id"))
+        if not entry:
+            raise ValueError("That profile doesn't exist")
+        if not check_password(entry, password):
+            time.sleep(1)   # slows down guessing
+            raise ValueError("Wrong password")
+        load_profile(entry["id"], derive(password, entry["salt"], "key") if entry["check"] else None)
+        work_session["start"] = time.time()
+        return f"Hi {entry['name']}! 👋"
+    if action == "add":
+        name = str(data.get("name", "")).strip()[:24]
+        if not name:
+            raise ValueError("Give the new profile a name")
+        if len(password) < 4:
+            raise ValueError("Use a password of at least 4 characters")
+        salt = base64.b64encode(os.urandom(16)).decode()
+        entry = {"id": "p" + os.urandom(3).hex(), "name": name, "emoji": str(data.get("emoji") or "🙂")[:4],
+                 "salt": salt, "check": base64.b64encode(derive(password, salt, "check")).decode()}
+        profiles["list"].append(entry)
+        load_profile(entry["id"], derive(password, salt, "key"))
+        work_session["start"] = time.time()
+        return f"Welcome, {name}! Meet your new buddy 🤖"
+    if action == "rename":
+        active["name"] = str(data.get("name", "")).strip()[:24] or active["name"]
+        active["emoji"] = str(data.get("emoji") or active["emoji"])[:4]
+        save_json(PROFILES_FILE, profiles)
+        stats["profile"] = {**(stats["profile"] or {}), "name": active["name"], "emoji": active["emoji"]}
+        return "Saved"
+    if action == "password":
+        global profile_key
+        if not check_password(active, str(data.get("old", ""))):
+            time.sleep(1)
+            raise ValueError("Your current password isn't right")
+        new = str(data.get("new", ""))
+        if new and len(new) < 4:
+            raise ValueError("Use a password of at least 4 characters")
+        secrets = {k: unprotect(config[k]) for k in ("gmail_password", "calendar_url")}   # re-lock them with the new password
+        active["salt"] = base64.b64encode(os.urandom(16)).decode()
+        active["check"] = base64.b64encode(derive(new, active["salt"], "check")).decode() if new else ""
+        profile_key = derive(new, active["salt"], "key") if new else None
+        for k, v in secrets.items():
+            config[k] = protect(v)
+        save_json(CONFIG_FILE, config)
+        profiles["keys"] = {active["id"]: windows_lock(profile_key)} if profile_key else {}
+        save_json(PROFILES_FILE, profiles)
+        return "Password changed" if new else "Password removed"
+    if action == "delete":
+        entry = profile_entry(data.get("id"))
+        if not entry or len(profiles["list"]) < 2:
+            raise ValueError("You can't delete the only profile")
+        if not check_password(entry, password):
+            time.sleep(1)
+            raise ValueError("Wrong password")
+        profiles["list"].remove(entry)
+        shutil.rmtree(os.path.join(PROFILE_ROOT, entry["id"]), ignore_errors=True)
+        if entry["id"] == profiles["active"]:   # deleted yourself: the next profile takes over, locked until unlocked
+            nxt = profiles["list"][0]
+            load_profile(nxt["id"], None)
+        save_json(PROFILES_FILE, profiles)
+        return f"{entry['name']}'s profile was deleted"
+    raise ValueError("Unknown profile action")
+
+
 def api_insights():
     return {"summary": tracker.summary(), "now": stats["activity"], "learned": learner.rules(),
             "categories": {k: v for k, v in brain.INFO.items()}, "productive": sorted(brain.PRODUCTIVE)}
@@ -1072,6 +1347,7 @@ def api_state():
         "secureUrl": secure_phone_url(), "secureQr": qr_svg(secure_phone_url()),
         "gmailUser": config["gmail_user"], "gmailSaved": bool(config["gmail_password"]),
         "calendarSaved": bool(config["calendar_url"]), "startup": os.path.exists(STARTUP_LNK),
+        "payday": config.get("payday", 0), "birthday": config.get("birthday", ""),
     }
 
 
@@ -1149,7 +1425,7 @@ def api_uninstall(_data):
 API = {
     "prefs": lambda d: (update_prefs(d), "Saved")[1], "buddy": api_buddy, "accounts": api_accounts,
     "startup": api_startup, "test-sound": api_test_sound, "onboarded": api_onboarded, "uninstall": api_uninstall,
-    "media": api_media, "tool": api_tool,
+    "media": api_media, "tool": api_tool, "profile": api_profile, "life": lambda d: api_life(d),
 }
 
 
@@ -1456,7 +1732,7 @@ def run_app(args):
         "/icon-192.png": ("image/png", png_bytes(robot_image(192))),
         "/icon-512.png": ("image/png", png_bytes(robot_image(512))),
     }
-    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, start_secure_server):
+    for loop in (stats_loop, audio_loop, media_loop, mail_loop, calendar_loop, keys_loop, signals_loop, net_loop, life_loop, start_secure_server):
         threading.Thread(target=loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

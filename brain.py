@@ -282,3 +282,92 @@ class ActivityTracker:
             "week": [label(k) + [mins(s)] for k, s in sorted(week_acts.items(), key=lambda kv: -kv[1]) if s >= 60][:8],
             "timeline": timeline,
         }
+
+
+# ---------- the world around you: weather, season, holidays, payday ----------
+# Festival dates that follow the moon, from published calendars (they can shift by a day locally).
+LUNAR_DATES = {
+    "eid_fitr": {2026: "03-20", 2027: "03-10", 2028: "02-27", 2029: "02-15", 2030: "02-05", 2031: "01-25"},
+    "eid_adha": {2026: "05-27", 2027: "05-17", 2028: "05-05", 2029: "04-24", 2030: "04-13", 2031: "04-02"},
+    "diwali": {2026: "11-08", 2027: "10-29", 2028: "10-17", 2029: "11-05", 2030: "10-26", 2031: "11-14"},
+    "lunar_ny": {2026: "02-17", 2027: "02-06", 2028: "01-26", 2029: "02-13", 2030: "02-03", 2031: "01-23"},
+}
+WEATHER_KINDS = [((0,), "clear"), ((1, 2), "partly"), ((3,), "cloudy"), ((45, 48), "fog"), ((51, 53, 55, 56, 57), "drizzle"),
+                 ((61, 63, 65, 66, 67, 80, 81, 82), "rain"), ((71, 73, 75, 77, 85, 86), "snow"), ((95, 96, 99), "storm")]
+
+
+def weather_kind(code):
+    return next((kind for codes, kind in WEATHER_KINDS if code in codes), "cloudy")
+
+
+def _near(today, key, days_before=0, days_after=0):
+    md = LUNAR_DATES[key].get(today.year)
+    if not md:
+        return False
+    day = datetime.date(today.year, int(md[:2]), int(md[3:]))
+    return -days_before <= (today - day).days <= days_after
+
+
+def occasions(today, prefs, birthday):
+    out = []
+    add = lambda key, label, emoji, greeting: out.append({"key": key, "label": label, "emoji": emoji, "greeting": greeting})
+    md = today.strftime("%m-%d")
+    if birthday and md == birthday:
+        add("birthday", "Your birthday", "🎂", "Happy birthday!! 🎂🎉")
+    if md == "01-01":
+        add("newyear", "New Year", "🎉", "Happy New Year! 🎉")
+    if md == "12-31":
+        add("newyeareve", "New Year's Eve", "🥂", "Last day of the year! 🥂")
+    if md == "10-31":
+        add("halloween", "Halloween", "🎃", "Happy Halloween! 🎃")
+    if prefs.get("hChristmas") and "12-24" <= md <= "12-26":
+        add("christmas", "Christmas", "🎄", "Merry Christmas! 🎄")
+    if prefs.get("hEid") and (_near(today, "eid_fitr", 0, 2) or _near(today, "eid_adha", 0, 3)):
+        add("eid", "Eid", "🌙", "Eid Mubarak! 🌙✨")
+    if prefs.get("hDiwali") and _near(today, "diwali", 1, 1):
+        add("diwali", "Diwali", "🪔", "Happy Diwali! 🪔✨")
+    if prefs.get("hLunar") and _near(today, "lunar_ny", 0, 2):
+        add("lunar", "Lunar New Year", "🧧", "Happy Lunar New Year! 🧧")
+    return out
+
+
+def season(today, latitude):
+    if latitude is not None and abs(latitude) < 15:
+        return "tropical"
+    north = {12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring",
+             6: "summer", 7: "summer", 8: "summer", 9: "autumn", 10: "autumn", 11: "autumn"}[today.month]
+    if latitude is not None and latitude < 0:
+        north = {"winter": "summer", "summer": "winter", "spring": "autumn", "autumn": "spring"}[north]
+    return north
+
+
+def _payday_in(year, month, day):
+    last = (datetime.date(year + month // 12, month % 12 + 1, 1) - datetime.timedelta(days=1)).day
+    return datetime.date(year, month, last if day >= 99 else min(day, last))
+
+
+def money(today, payday):
+    """Where you are in your pay cycle: 'payday', 'flush' (just paid), 'tight' (the last stretch) or 'normal'."""
+    if not payday:
+        return None
+    this = _payday_in(today.year, today.month, payday)
+    if this > today:
+        prev_m = (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
+        last, nxt = _payday_in(*prev_m, payday), this
+    else:
+        next_m = (today.year, today.month + 1) if today.month < 12 else (today.year + 1, 1)
+        last, nxt = this, _payday_in(*next_m, payday)
+    since, until = (today - last).days, (nxt - today).days
+    phase = "payday" if since == 0 else "flush" if since <= 4 else "tight" if until <= 4 else "normal"
+    return {"phase": phase, "daysToPayday": until, "daysSincePayday": since}
+
+
+def life_context(today, prefs, config, location, weather):
+    lat = location.get("lat") if location else None
+    return {
+        "weather": weather if prefs.get("weather") else None,
+        "city": location.get("city") if location else None,
+        "season": season(today, lat) if prefs.get("seasons") else None,
+        "occasions": occasions(today, prefs, config.get("birthday")) if prefs.get("occasions") else [],
+        "money": money(today, int(config.get("payday") or 0)) if prefs.get("money") else None,
+    }

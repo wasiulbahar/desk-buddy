@@ -28,6 +28,12 @@ Turn your spare phone into a cute desk robot that reacts to what your PC is doin
 | You work, read, chat, game… | Learns your rhythm: cheers focus streaks, notices context-switching, sums up your day (Insights page) 🧠 |
 | You type / the PC is loading / the internet drops | Typing dots ⌨️ / spinner eyes ⏳ / worried searching 📡 |
 | You copy, screenshot, mute or max the volume | 📋 / camera flash 📸 / shh 🤫 / covers its eyes 🙉 |
+| It's raining, snowing, sunny or stormy where you are | Rain, snow, clouds, sun or lightning behind its eyes; a scarf in the cold 🌦️ |
+| Dawn, day, evening, night | A sunrise glow, bright days, warm evenings, moon and stars 🌙 |
+| Autumn / spring | Falling leaves / drifting blossom 🍂 |
+| Your birthday, New Year, Halloween, Eid, Diwali, Christmas, Lunar New Year | Party, witch or Santa hats, decorations and a greeting 🎉 |
+| Payday / the days before it | Sunglasses and 💸 confetti / gentle "hang in there" support |
+| Several people share the PC | Each person gets their own password-protected profile: own buddy, Gmail, Calendar, settings and history 👥 |
 | You spend time together | Friendship grows from level 1 (shy) to 5 (best friends) 💞 |
 | Nothing much happening | Sneezes, hiccups, hums, nods off and chases flies 🤧 |
 
