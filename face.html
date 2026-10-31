@@ -60,7 +60,14 @@
 const $ = id => document.getElementById(id);
 const cv = $('c'), ctx = cv.getContext('2d');
 const params = new URLSearchParams(location.search);
-const BREAK_MIN = +params.get('break') || 50;   // add ?break=25 to the URL to change it
+
+// The switches from the PC dashboard (these defaults are used until the PC sends its own).
+const DEFAULT_PREFS = {
+  music: true, reading: true, meeting: true, suspicious: true, stress: true, quirks: true,
+  breaks: true, breakMinutes: 50, bedtime: true, mailAlerts: true, calendarAlerts: true,
+  soundOutput: 'phone', volume: 80, cheeky: 0, sensors: true, mic: true,
+};
+const P = k => ((state && state.prefs) || DEFAULT_PREFS)[k];
 
 // What you're doing, judged from the window title.
 const FUN_RE = /youtube|netflix|twitch|reddit|instagram|tiktok|facebook|prime video|disney\+|9gag/i;
@@ -132,9 +139,34 @@ function audio() {
   if (ac.state === 'suspended') ac.resume();
   return ac;
 }
+// Every sound is a list of notes and noise bursts. Played here, and/or sent to the PC to play the same way.
+let outbox = null, forcePhone = false;
+function emit(ev) {
+  if (!forcePhone && (!soundOn || quiet())) return;
+  const out = forcePhone || DEMO ? 'phone' : P('soundOutput');
+  if (out === 'phone' || out === 'both') (ev.k === 'noise' ? playNoise : playTone)(ev);
+  if (out === 'pc' || out === 'both') {
+    if (!outbox) {   // gather the notes of one sound into a single message
+      outbox = [];
+      queueMicrotask(() => {
+        const events = outbox; outbox = null;
+        fetch('sound', { method: 'POST', body: JSON.stringify({ events }) }).catch(() => {});
+      });
+    }
+    outbox.push(ev);
+  }
+}
 function tone(f0, f1, dur, { type = 'sine', vol = .12, delay = 0, vib = 0, trem = 0 } = {}) {
-  const a = soundOn && !quiet() && audio();
+  emit({ k: 'tone', f0, f1, dur, type, vol, delay, vib, trem });
+}
+function noise(dur, vol, freq, delay = 0) {
+  emit({ k: 'noise', dur, vol, freq, delay });
+}
+function playTone({ f0, f1, dur, type, vol, delay, vib, trem }) {
+  const a = audio();
   if (!a) return;
+  vol *= P('volume') / 100;
+  if (vol < .0002) return;
   const t = a.currentTime + delay, o = a.createOscillator(), g = a.createGain();
   o.type = type;
   o.frequency.setValueAtTime(f0, t);
@@ -152,9 +184,11 @@ function tone(f0, f1, dur, { type = 'sine', vol = .12, delay = 0, vib = 0, trem 
   if (trem) wobble(trem, vol * .8, g.gain);      // fluttering volume (purr)
   o.start(t); o.stop(t + dur + .05);
 }
-function noise(dur, vol, freq, delay = 0) {
-  const a = soundOn && !quiet() && audio();
+function playNoise({ dur, vol, freq, delay }) {
+  const a = audio();
   if (!a) return;
+  vol *= P('volume') / 100;
+  if (vol < .0002) return;
   const t = a.currentTime + delay, buf = a.createBuffer(1, Math.ceil(a.sampleRate * dur), a.sampleRate);
   const data = buf.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -187,7 +221,8 @@ const sfx = {
 };
 
 // ---------- connection to the PC ----------
-let state = { x: 0, y: 0, cpu: 0, ram: 0, idle: 0, title: '', work: 0, audio: 0, media: null, mail: null, calendar: null, buddy: null };
+let state = { x: 0, y: 0, cpu: 0, ram: 0, idle: 0, title: '', work: 0, audio: 0, media: null, mail: null, calendar: null, buddy: null, prefs: null, ping: 0 };
+let lastPing = null;
 let lastMsg = -1e9, lastMove = -1e9, cpuS = 0, px = 0, py = 0;
 let spin = 0, lastAng = null;                       // for "spin the mouse and it gets dizzy"
 let audioAvg = 0, musicSince = 0, lastBeat = 0;     // for dancing to music
@@ -200,6 +235,11 @@ function onState(s) {
   px = s.x; py = s.y;
   cpuS += (s.cpu - cpuS) * 0.02;   // smoothed so short spikes don't stress it out
   state = s; lastMsg = now;
+  if (lastPing !== null && s.ping > lastPing) {   // "Test on phone" from the dashboard
+    forcePhone = true; sfx.chirp(); forcePhone = false;
+    setOverride('happy', 1200); bounceV = -3;
+  }
+  lastPing = s.ping;
 
   // Add up how far the cursor's direction turns; a few fast circles in a row = dizzy.
   if (Math.hypot(vx, vy) > 0.012) {
@@ -217,7 +257,7 @@ function onState(s) {
 }
 const connected = now => now - lastMsg < 3000;
 const songPlaying = () => !!(state.media && state.media.playing);
-const musicPlaying = now => (songPlaying() && audioAvg > .015) || (musicSince && now - musicSince > 3000);
+const musicPlaying = now => P('music') && ((songPlaying() && audioAvg > .015) || (musicSince && now - musicSince > 3000));
 const tellPC = kind => { if (!DEMO) fetch('bond', { method: 'POST', body: kind }).catch(() => {}); };
 
 // Demo mode (face.html?demo) for the website: no PC needed. The page around it sends
@@ -230,7 +270,8 @@ const DEMO_LINES = {
 };
 if (DEMO) {
   let demo = { x: 0, y: 0 }, demoSongUntil = 0, demoReadUntil = 0;
-  const demoBuddy = { name: 'Pip', personality: 'cheerful', level: 3, progress: .4, days: 12, awayDays: 0 };
+  const demoBuddy = { name: params.get('name') || 'Pip', personality: params.get('personality') || 'cheerful',
+                      level: +params.get('level') || 3, progress: .4, days: 12, awayDays: 0 };
   addEventListener('message', e => {
     const d = e.data || {}, now = performance.now();
     if (typeof d.x === 'number') demo = { x: clamp(d.x, -1, 1), y: clamp(d.y, -1, 1) };
@@ -273,7 +314,7 @@ function say(html, ms) {
   clearTimeout(bubbleTimer);
   if (ms > 0) bubbleTimer = setTimeout(() => reminding ? showReminder() : bubble.classList.remove('show'), ms);
 }
-const showReminder = () => say(`You've been working ${Math.round(state.work)} min!<br>Stretch &amp; drink some water 💧<br><small>tap me when done</small>`, 0);
+const showReminder = () => say(`You've been working ${Math.floor(state.work)} min!<br>Stretch &amp; drink some water 💧<br><small>tap me when done</small>`, 0);
 
 // ---------- mood brain ----------
 let baseMood = 'neutral', mood = 'neutral', override = null, reminding = false, breakAck = 0;
@@ -338,6 +379,7 @@ let song = '', wasPlaying = false, mailSeq = null, lastLevel = +store.get('level
 const reminded = new Set();
 function checkMedia(now) {
   const m = state.media, playing = songPlaying(), key = m ? m.title + '|' + m.artist : '';
+  if (!P('music')) { wasPlaying = playing; song = key; return; }
   if (playing && m.title && key !== song) {           // a new song started
     song = key; cancelQuirk(); setOverride('happy', 900); sfx.chirp();
     say(`🎵 <b>${esc(m.title)}</b>${m.artist ? `<br><small>${esc(m.artist)}</small>` : ''}`, 3500);
@@ -357,13 +399,14 @@ function checkMail() {
   const m = state.mail;
   if (!m) return;
   if (mailSeq === null || m.seq < mailSeq) { mailSeq = m.seq; return; }   // first look, or the PC restarted
-  if (m.seq > mailSeq) { mailSeq = m.seq; if (m.latest) announceMail(m); }
+  if (m.seq > mailSeq) { mailSeq = m.seq; if (m.latest && P('mailAlerts')) announceMail(m); }
 }
 function remind(html, now) {
   cancelQuirk(); setOverride(now ? 'surprised' : 'curious', 1500); bounceV = -4;
   sfx.bell(); showIcon('🔔', 3500); say(html, 7000);
 }
 function checkCalendar() {
+  if (!P('calendarAlerts')) return;
   for (const ev of (state.calendar && state.calendar.events) || []) {
     const mins = (ev.start * 1000 - Date.now()) / 60000, key = ev.title + ev.start;
     if (mins <= 1 && mins > -3 && !reminded.has(key + 'now')) {
@@ -401,13 +444,13 @@ function think(now) {
   if (!connected(now)) m = 'lost';
   else if (state.idle > 600) m = 'sleeping';
   else if (state.idle > trait().sleepyAfter) m = 'sleepy';
-  else if (MEET_RE.test(title)) m = 'meeting';
-  else if (cpuS > 85) m = 'stressed';
+  else if (P('meeting') && MEET_RE.test(title)) m = 'meeting';
+  else if (P('stress') && cpuS > 85) m = 'stressed';
   else if (musicPlaying(now)) m = 'groove';
-  else if (READ_RE.test(title)) m = 'reading';
-  else if (FUN_RE.test(title)) m = 'suspicious';
+  else if (P('reading') && READ_RE.test(title)) m = 'reading';
+  else if (P('suspicious') && FUN_RE.test(title)) m = 'suspicious';
   else if (WORK_RE.test(title)) m = 'focused';
-  else if (lateNight()) m = 'drowsy';
+  else if (P('bedtime') && lateNight()) m = 'drowsy';
   else m = 'neutral';
   if (m !== baseMood) { onMoodChange(baseMood, m, now); baseMood = m; }
 
@@ -415,18 +458,18 @@ function think(now) {
 
   // Break reminder. The PC resets "work" after 5 min away, which also counts as a break.
   if (state.work < breakAck) breakAck = 0;
-  const due = connected(now) && state.work - breakAck >= BREAK_MIN;
+  const due = P('breaks') && connected(now) && state.work - breakAck >= P('breakMinutes');
   if (due && !reminding && m !== 'sleeping' && m !== 'sleepy' && m !== 'meeting') { reminding = true; sfx.chirp(); showReminder(); }
   if (!due && reminding) { reminding = false; bubble.classList.remove('show'); }
 
   const calm = (m === 'neutral' || m === 'drowsy' || m === 'focused') && !overridden() && !reminding && !touch && !quirkTimers.length;
-  if (calm && lateNight() && state.idle < 60 && now > nextBedtime) {
+  if (calm && P('bedtime') && lateNight() && state.idle < 60 && now > nextBedtime) {
     nextBedtime = now + 20 * 60000;
     setOverride('sleepy', 2000); sfx.yawn(); say(pick(BED_LINES), 3500);
   } else if (calm && level() >= 5 && now > nextGift) {   // best friends: a little heart, just because
     nextGift = now + (30 + Math.random() * 30) * 60000;
     setOverride('love', 2000); showIcon('💙', 2000); sfx.chirp();
-  } else if (calm && now > nextQuirk) {
+  } else if (calm && P('quirks') && now > nextQuirk) {
     nextQuirk = now + (40000 + Math.random() * 60000) * trait().quirkEvery;
     const sleepyNow = lateNight() || m === 'drowsy' || trait().sleepy;
     QUIRKS[sleepyNow ? pick(['nodOff', 'nodOff', 'sneeze', 'hum']) : pick(['sneeze', 'hiccup', 'fly', 'fly', 'hum', 'nodOff'])]();

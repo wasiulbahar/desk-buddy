@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Desk Buddy</title>
+<link rel="icon" href="/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05080b; --panel: #0b1218; --panel2: #0f1820; --line: #17252e; --text: #d8eef2; --muted: #8aa3ab;
+    --cyan: #5af0ff; --green: #7dff9b; --red: #ff7b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font-family: "Space Grotesk", system-ui, "Segoe UI", sans-serif; line-height: 1.5;
+         display: grid; grid-template-columns: 230px 1fr; }
+  a { color: var(--cyan); }
+  button { font: inherit; cursor: pointer; }
+
+  /* sidebar */
+  aside { background: var(--panel); border-right: 1px solid var(--line); padding: 22px 14px; display: flex; flex-direction: column; gap: 4px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; padding: 0 8px 18px; }
+  .logo i { width: 34px; height: 34px; border-radius: 9px; background: #000; display: flex; gap: 5px; align-items: center; justify-content: center;
+            box-shadow: 0 0 18px rgba(90,240,255,.3); }
+  .logo i::before, .logo i::after { content: ""; width: 7px; height: 12px; border-radius: 3px; background: var(--cyan); }
+  nav a { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; color: var(--muted); text-decoration: none; font-size: 15px; }
+  nav a:hover { background: var(--panel2); color: var(--text); }
+  nav a.on { background: rgba(90,240,255,.1); color: var(--cyan); }
+  aside .foot { margin-top: auto; padding: 0 8px; font-size: 13px; color: var(--muted); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3a4a52; margin-right: 6px; }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+
+  /* pages */
+  main { overflow-y: auto; padding: 32px 40px 60px; }
+  section.page { display: none; max-width: 860px; }
+  section.page.on { display: block; }
+  h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  h2 { font-size: 18px; margin: 0 0 4px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; margin-bottom: 16px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 11px; padding: 10px 18px; font-weight: 600;
+         background: var(--cyan); color: #00262c; }
+  .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  .btn.danger { background: transparent; color: var(--red); border: 1px solid rgba(255,123,107,.4); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  label.field { display: block; font-size: 14px; color: var(--muted); margin: 14px 0 5px; }
+  input[type=text], input[type=email], input[type=password] { width: 100%; font: inherit; color: var(--text); background: var(--bg);
+         border: 1px solid #23343f; border-radius: 10px; padding: 10px 12px; }
+  input:focus { outline: none; border-color: var(--cyan); }
+  .status { margin-top: 12px; font-size: 14px; padding: 8px 12px; border-radius: 10px; background: var(--bg); }
+  .status.ok { color: var(--green); }
+  ol.steps { padding-left: 20px; margin: 8px 0 0; color: #b4c8ce; font-size: 14px; }
+
+  /* robot preview */
+  .preview { aspect-ratio: 2.05; background: #000; border: 8px solid #15191d; border-radius: 26px; overflow: hidden;
+             box-shadow: 0 0 0 1px #2a3138, 0 0 60px rgba(90,240,255,.1); }
+  .preview iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+  /* stats chips */
+  .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .chip b { display: block; font-size: 16px; margin-top: 2px; }
+  .chip span { font-size: 13px; color: var(--muted); }
+
+  /* toggles */
+  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .toggle:first-of-type { border-top: 0; }
+  .toggle h3 { margin: 0; font-size: 16px; font-weight: 500; }
+  .toggle p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+  .switch { position: relative; width: 46px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; border-radius: 99px; background: #23343f; transition: .2s; }
+  .switch span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #9fb4bb; transition: .2s; }
+  .switch input:checked + span { background: var(--cyan); }
+  .switch input:checked + span::after { transform: translateX(20px); background: #00262c; }
+  input[type=range] { width: 100%; accent-color: var(--cyan); }
+  .rangeval { font-variant-numeric: tabular-nums; color: var(--cyan); font-weight: 600; }
+
+  /* choice cards */
+  .choices { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .choices.five { grid-template-columns: repeat(5, 1fr); }
+  .choice { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; color: var(--text); }
+  .choice:hover { border-color: #2c4552; }
+  .choice.on { border-color: var(--cyan); background: rgba(90,240,255,.07); box-shadow: 0 0 0 1px var(--cyan) inset; }
+  .choice .em { font-size: 26px; }
+  .choice b { display: block; margin: 6px 0 2px; }
+  .choice small { color: var(--muted); font-size: 13px; line-height: 1.4; display: block; }
+
+  /* friendship */
+  .bar { height: 10px; border-radius: 6px; background: #17252e; overflow: hidden; margin: 10px 0 6px; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, #5af0ff, #ff6eaf); border-radius: 6px; transition: width .6s; }
+  .levels { list-style: none; padding: 0; margin: 14px 0 0; }
+  .levels li { display: flex; gap: 12px; padding: 8px 0; color: var(--muted); font-size: 14px; }
+  .levels li b { color: var(--text); min-width: 64px; }
+  .levels li.done { color: var(--text); }
+  .levels li.done b { color: var(--cyan); }
+
+  /* QR */
+  .qrbox { background: #fff; border-radius: 18px; padding: 16px; width: 240px; height: 240px; box-shadow: 0 0 40px rgba(90,240,255,.3); flex: none; }
+  .qrbox svg { width: 100%; height: 100%; }
+  code { color: var(--cyan); font-size: 17px; }
+
+  /* toast */
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 20px); opacity: 0; transition: .25s; pointer-events: none;
+           background: #10351f; color: var(--green); border-radius: 12px; padding: 10px 18px; font-size: 14px; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.err { background: #3a1612; color: var(--red); }
+
+  /* welcome */
+  #welcome { position: fixed; inset: 0; z-index: 10; background: radial-gradient(circle at 50% 0%, rgba(90,240,255,.12), transparent 50%), var(--bg);
+             display: none; align-items: center; justify-content: center; padding: 30px; }
+  #welcome.on { display: flex; }
+  .wbox { width: min(760px, 100%); text-align: center; }
+  .wstep { display: none; }
+  .wstep.on { display: block; animation: rise .35s ease; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  .wbox h1 { font-size: 34px; margin-bottom: 8px; }
+  .wbox h1 span { color: var(--cyan); }
+  .wbox .preview { width: min(520px, 100%); margin: 26px auto; }
+  .wbox .qrbox { margin: 22px auto; }
+  .wbox .choices { margin: 24px 0; text-align: left; }
+  .wnav { display: flex; justify-content: center; gap: 10px; margin-top: 26px; }
+  .pips { display: flex; justify-content: center; gap: 8px; margin-bottom: 26px; }
+  .pips i { width: 34px; height: 5px; border-radius: 3px; background: #1b2a33; }
+  .pips i.on { background: var(--cyan); }
+  .waiting { margin-top: 6px; font-size: 16px; color: var(--muted); }
+  .waiting.ok { color: var(--green); font-weight: 600; }
+
+  @media (max-width: 900px) {
+    body { grid-template-columns: 1fr; }
+    aside { flex-direction: row; overflow-x: auto; padding: 10px; }
+    aside .logo, aside .foot { display: none; }
+    main { padding: 22px 18px 60px; }
+    .grid2, .chips, .choices, .choices.five { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <div class="logo"><i></i>Desk Buddy</div>
+  <nav>
+    <a href="#home">🏠 Home</a>
+    <a href="#buddy">🤖 Buddy</a>
+    <a href="#features">🎛️ Features</a>
+    <a href="#sound">🔊 Sound</a>
+    <a href="#phone">📱 Phone</a>
+    <a href="#accounts">📬 Mail &amp; calendar</a>
+    <a href="#about">⚙️ About</a>
+  </nav>
+  <div class="foot"><span class="dot" id="sideDot"></span><span id="sideStatus">No phone yet</span></div>
+</aside>
+
+<main>
+  <!-- HOME -->
+  <section class="page" id="p-home">
+    <h1 id="hello">Hi!</h1>
+    <p class="sub">Your buddy runs quietly in the background. You only need this window to change things.</p>
+    <div class="chips">
+      <div class="chip"><span>Phone</span><b id="cPhone">—</b></div>
+      <div class="chip"><span>Friendship</span><b id="cLevel">—</b></div>
+      <div class="chip"><span>Sound</span><b id="cSound">—</b></div>
+      <div class="chip"><span>Mail &amp; calendar</span><b id="cAcct">—</b></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><div class="preview"><iframe class="robot" title="Your buddy" allow="autoplay"></iframe></div>
+        <p class="muted" style="margin:12px 0 0">A live preview. Drag across it to pet it, click to poke it.</p></div>
+      <div class="card">
+        <h2 id="hName">—</h2>
+        <p class="muted" id="hPers">—</p>
+        <div class="bar"><i id="hBar"></i></div>
+        <p class="muted" id="hDays">—</p>
+        <div class="row" style="margin-top:18px">
+          <a class="btn" href="#phone">📱 Connect a phone</a>
+          <a class="btn ghost" href="#features">🎛️ Features</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- BUDDY -->
+  <section class="page" id="p-buddy">
+    <h1>Your buddy</h1>
+    <p class="sub">Its name, personality and how close you are.</p>
+    <div class="card">
+      <h2>Name</h2>
+      <div class="row" style="margin-top:10px"><input type="text" id="name" maxlength="20" style="max-width:320px"><button class="btn" id="saveName">Save</button></div>
+    </div>
+    <div class="card">
+      <h2>Personality</h2>
+      <p class="muted">Every buddy is born with one. You can change it here; it changes how it reacts to everything.</p>
+      <div class="choices five" id="persChoices" style="margin-top:14px"></div>
+    </div>
+    <div class="card">
+      <h2>Friendship</h2>
+      <p class="muted" id="bLevel">—</p>
+      <div class="bar"><i id="bBar"></i></div>
+      <p class="muted">It grows with days together, time at your PC, petting it and taking your breaks.</p>
+      <ul class="levels" id="levels"></ul>
+      <button class="btn danger" id="resetBond" style="margin-top:14px">Start our friendship over</button>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="page" id="p-features">
+    <h1>Features</h1>
+    <p class="sub">Switch anything on or off. Changes reach your phone instantly.</p>
+    <div class="card"><h2>What it notices</h2><div id="fNotice"></div></div>
+    <div class="card"><h2>Looking after you</h2><div id="fCare"></div>
+      <div id="breakRow" style="padding:4px 0 0">
+        <p class="muted" style="margin:6px 0">Remind me after <span class="rangeval" id="breakVal">50</span> minutes of work</p>
+        <input type="range" id="breakMinutes" min="10" max="180" step="5">
+      </div>
+    </div>
+    <div class="card"><h2>Its own life</h2><div id="fLife"></div></div>
+    <div class="card"><h2>Alerts</h2><div id="fAlerts"></div></div>
+  </section>
+
+  <!-- SOUND -->
+  <section class="page" id="p-sound">
+    <h1>Sound</h1>
+    <p class="sub">Where your buddy's little voice comes from.</p>
+    <div class="choices" id="soundChoices"></div>
+    <div class="card" style="margin-top:16px">
+      <h2>Volume <span class="rangeval" id="volVal"></span></h2>
+      <input type="range" id="volume" min="0" max="100" step="5" style="margin-top:10px">
+      <div class="row" style="margin-top:16px">
+        <button class="btn ghost" data-test="phone">▶ Test on phone</button>
+        <button class="btn ghost" data-test="pc">▶ Test on PC</button>
+      </div>
+      <p class="muted" style="margin:12px 0 0">Phones only allow sound after you've tapped the robot once. In meetings it always stays quiet.</p>
+    </div>
+  </section>
+
+  <!-- PHONE -->
+  <section class="page" id="p-phone">
+    <h1>Phone</h1>
+    <p class="sub">Connect your phone once. After that, just open Desk Buddy on it.</p>
+    <div class="card row" style="align-items:flex-start;gap:28px">
+      <div class="qrbox qr"></div>
+      <div style="flex:1;min-width:240px">
+        <h2>Scan with your phone's camera</h2>
+        <p class="muted">or type <code class="url"></code></p>
+        <p class="waiting" id="phoneWait">Waiting for a phone…</p>
+        <ol class="steps">
+          <li>Phone and PC must be on the <b>same Wi-Fi</b>.</li>
+          <li>Tap the robot once to make it fullscreen.</li>
+          <li>In your phone browser's menu, choose <b>Add to Home screen</b>. Next time, just tap its icon.</li>
+          <li>If it ever can't find your PC (for example after a router restart), scan this code again.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ACCOUNTS -->
+  <section class="page" id="p-accounts">
+    <h1>Mail &amp; calendar</h1>
+    <p class="sub">Optional. Passwords and links are encrypted by Windows and never leave this PC.</p>
+    <div class="card">
+      <h2>📧 Gmail</h2>
+      <p class="muted">Your buddy tells you when new mail arrives (sender and subject only) and shows how many are unread.</p>
+      <ol class="steps">
+        <li>Turn on <a href="https://myaccount.google.com/signinoptions/twosv" target="_blank" rel="noopener">2-Step Verification</a> for your Google account, if it isn't on already.</li>
+        <li>Open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App passwords</a>, type <b>Desk Buddy</b> as the name and click <b>Create</b>.</li>
+        <li>Paste the 16-letter password below.</li>
+      </ol>
+      <label class="field" for="gu">Gmail address</label>
+      <input id="gu" type="email" autocomplete="off" placeholder="you@gmail.com">
+      <label class="field" for="gp">App password</label>
+      <input id="gp" type="password" autocomplete="new-password">
+      <div class="row" style="margin-top:14px"><button class="btn" id="saveGmail">Connect Gmail</button><button class="btn ghost" id="forgetGmail">Disconnect</button></div>
+      <div class="status" id="sGmail"></div>
+    </div>
+    <div class="card">
+      <h2>📅 Google Calendar</h2>
+      <p class="muted">Reminders 10 minutes before each event and when it starts.</p>
+      <ol class="steps">
+        <li>Open <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener">Google Calendar settings</a>.</li>
+        <li>On the left, click your calendar's name, then scroll to <b>Integrate calendar</b>.</li>
+        <li>Copy <b>Secret address in iCal format</b> and paste it below.</li>
+      </ol>
+      <label class="field" for="cu">Secret iCal address</label>
+      <input id="cu" type="password" autocomplete="off">
+      <div class="row" style="margin-top:14px"><button class="btn" id="saveCal">Connect Calendar</button><button class="btn ghost" id="forgetCal">Disconnect</button></div>
+      <div class="status" id="sCal"></div>
+    </div>
+  </section>
+
+  <!-- ABOUT -->
+  <section class="page" id="p-about">
+    <h1>About</h1>
+    <p class="sub" id="ver">Desk Buddy</p>
+    <div class="card">
+      <div class="toggle"><div><h3>Start with Windows</h3><p>Runs quietly in the tray every time you log in, so your phone can always connect.</p></div>
+        <label class="switch"><input type="checkbox" id="startup"><span></span></label></div>
+    </div>
+    <div class="card">
+      <h2>Show the welcome tour again</h2>
+      <p class="muted">Walk through the first-time setup once more.</p>
+      <button class="btn ghost" id="replay" style="margin-top:8px">Start tour</button>
+    </div>
+    <div class="card">
+      <h2>Uninstall</h2>
+      <p class="muted">Removes Desk Buddy, its shortcuts, saved settings and friendship progress from this PC.</p>
+      <button class="btn danger" id="uninstall" style="margin-top:8px">Uninstall Desk Buddy</button>
+    </div>
+    <p class="muted"><a href="https://wasiulbahar.github.io/desk-buddy/" target="_blank" rel="noopener">Website</a> · <a href="https://wasiulbahar.github.io/desk-buddy/features.html" target="_blank" rel="noopener">All features</a> · <a href="https://github.com/wasiulbahar/desk-buddy" target="_blank" rel="noopener">GitHub</a></p>
+  </section>
+</main>
+
+<!-- FIRST-RUN WELCOME -->
+<div id="welcome">
+  <div class="wbox">
+    <div class="pips" id="pips"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="wstep" data-step="0">
+      <h1>Say hi to <span class="bname">your buddy</span>!</h1>
+      <p class="sub" id="wPers"></p>
+      <div class="preview"><iframe class="robot" title="Your buddy" allow="autoplay"></iframe></div>
+      <p class="muted">It lives on your spare phone and reacts to everything you do on this PC.</p>
+      <div class="wnav"><button class="btn" data-next>Let's connect your phone →</button></div>
+    </div>
+    <div class="wstep" data-step="1">
+      <h1>Connect your phone</h1>
+      <p class="sub">Open your phone's camera and point it at this code. Same Wi-Fi as this PC.</p>
+      <div class="qrbox qr"></div>
+      <p class="muted">or type <code class="url"></code></p>
+      <p class="waiting" id="wWait">Waiting for your phone…</p>
+      <div class="wnav"><button class="btn ghost" data-next>Skip for now</button><button class="btn" data-next id="wPhoneNext" disabled>Next →</button></div>
+    </div>
+    <div class="wstep" data-step="2">
+      <h1>Where should it make sounds?</h1>
+      <p class="sub">You can change this any time.</p>
+      <div class="choices" id="wSound"></div>
+      <div class="wnav"><button class="btn" data-next>Next →</button></div>
+    </div>
+    <div class="wstep" data-step="3">
+      <h1>Mail and calendar</h1>
+      <p class="sub">Want <span class="bname">your buddy</span> to tell you about new Gmail and remind you before Google Calendar events?</p>
+      <div class="wnav"><button class="btn ghost" data-next>Maybe later</button><button class="btn" data-next data-then="accounts">Yes, set it up</button></div>
+    </div>
+    <div class="wstep" data-step="4">
+      <h1>All set! 🎉</h1>
+      <p class="sub">From now on <span class="bname">your buddy</span> starts by itself whenever you turn on this PC.<br>Just open Desk Buddy on your phone and it connects.</p>
+      <div class="card" style="text-align:left;max-width:520px;margin:0 auto">
+        <p style="margin:0">To change anything later, open <b>Desk Buddy</b> from the Start menu, your desktop, or the little robot by your clock.</p>
+      </div>
+      <div class="wnav"><button class="btn" id="wDone">Open my dashboard</button></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+let S = null;   // everything the PC told us
+
+const FEATURES = {
+  fNotice: [
+    ['music', 'Dances to music', 'Dances and shows the song when Spotify, YouTube or any player is playing.'],
+    ['reading', 'Reading glasses', 'Puts on glasses and reads along with PDFs, Google Docs, Wikipedia and more.'],
+    ['meeting', 'Quiet in meetings', 'Goes quiet and mutes itself in Zoom, Teams, Meet, Webex and Skype.'],
+    ['suspicious', 'Suspicious squint', 'Gives you a look when you open YouTube, Netflix, Reddit and friends.'],
+    ['stress', 'Feels your CPU', 'Turns orange and sweats when your PC is working hard.'],
+  ],
+  fCare: [
+    ['breaks', 'Break reminders', 'Reminds you to stretch and drink water.'],
+    ['bedtime', 'Bedtime nudges', 'Gets drowsy after midnight and nudges you toward bed.'],
+  ],
+  fLife: [
+    ['quirks', 'Quirks', 'Sneezes, hiccups, hums, nods off and chases flies when things are quiet.'],
+  ],
+  fAlerts: [
+    ['mailAlerts', 'New mail alerts', 'Tells you who just emailed you (needs Gmail connected).'],
+    ['calendarAlerts', 'Calendar reminders', '10 minutes before each event and when it starts (needs Calendar connected).'],
+  ],
+};
+const SOUND = [
+  ['phone', '📱', 'Phone', 'Sounds come from the phone, right where your buddy is.'],
+  ['pc', '🖥️', 'PC', 'Sounds play through this PC\'s speakers or headphones.'],
+  ['both', '🔊', 'Both', 'Phone and PC together.'],
+  ['off', '🔇', 'Off', 'A silent buddy. It still talks with its face.'],
+];
+const PERS_INFO = {
+  cheerful: 'Smiley, loves being petted, rarely grumpy.',
+  shy: 'Looks away bashfully, slow to warm up.',
+  hyper: 'Bouncy, chatty, gets dizzy easily.',
+  sleepy: 'Naps a lot, grumbles if woken.',
+  grumpy: 'Frowns and sulks, but melts when petted.',
+};
+const LEVELS = [
+  [1, 'Getting to know you: a little jumpy.'], [2, 'Waves when you come back.'], [3, 'Dozes off when you pet it.'],
+  [4, 'Celebrates your long focus sessions.'], [5, 'Best friends: little hearts, just because.'],
+];
+
+async function api(name, data) {
+  try {
+    const r = await fetch('/api/' + name, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data || {}) });
+    const j = await r.json();
+    toast(j.message, !j.ok);
+    return j;
+  } catch (e) { toast('Could not reach Desk Buddy', true); return { ok: false }; }
+}
+let toastTimer;
+function toast(msg, err) {
+  const t = $('#toast');
+  t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', 2200);
+}
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+// ---------- rendering ----------
+function renderAll() {
+  const b = S.buddy, p = S.prefs;
+  $$('.bname').forEach(e => e.textContent = b.name);
+  $('#hName').textContent = b.name;
+  $('#hPers').textContent = S.personalities[b.personality];
+  $('#wPers').textContent = `Personality: ${S.personalities[b.personality]} · ${PERS_INFO[b.personality]}`;
+  const pct = Math.round((b.level - 1 + b.progress) / 5 * 100);
+  $('#hBar').style.width = $('#bBar').style.width = pct + '%';
+  $('#hDays').textContent = `Friendship level ${b.level} of 5 · ${b.days ? plural(b.days, 'day') + ' together' : 'you met today'}`;
+  $('#bLevel').textContent = `Level ${b.level} of 5 · ${Math.round(b.progress * 100)}% of the way to the next level`;
+  $('#levels').innerHTML = LEVELS.map(([n, t]) => `<li class="${b.level >= n ? 'done' : ''}"><b>${b.level >= n ? '✓' : ''} Level ${n}</b>${t}</li>`).join('');
+  if (document.activeElement !== $('#name')) $('#name').value = b.name;
+  $('#persChoices').innerHTML = Object.entries(S.personalities).map(([k, v]) =>
+    `<button class="choice ${k === b.personality ? 'on' : ''}" data-pers="${k}"><span class="em">${v.split(' ').pop()}</span><b>${v.replace(/\s\S+$/, '')}</b><small>${PERS_INFO[k]}</small></button>`).join('');
+  for (const [box, list] of Object.entries(FEATURES)) {
+    $('#' + box).innerHTML = list.map(([k, t, d]) =>
+      `<div class="toggle"><div><h3>${t}</h3><p>${d}</p></div><label class="switch"><input type="checkbox" data-pref="${k}" ${p[k] ? 'checked' : ''}><span></span></label></div>`).join('');
+  }
+  $('#breakMinutes').value = p.breakMinutes; $('#breakVal').textContent = p.breakMinutes;
+  $('#breakRow').style.opacity = p.breaks ? 1 : .4;
+  const soundCards = SOUND.map(([k, e, t, d]) => `<button class="choice ${p.soundOutput === k ? 'on' : ''}" data-sound="${k}"><span class="em">${e}</span><b>${t}</b><small>${d}</small></button>`).join('');
+  $('#soundChoices').innerHTML = $('#wSound').innerHTML = soundCards;
+  $('#volume').value = p.volume; $('#volVal').textContent = p.volume + '%';
+  $('#cSound').textContent = SOUND.find(s => s[0] === p.soundOutput).slice(1, 3).join(' ');
+  $$('.qr').forEach(e => e.innerHTML = S.qr);
+  $$('.url').forEach(e => e.textContent = S.phoneUrl);
+  if (document.activeElement !== $('#gu')) $('#gu').value = S.gmailUser;
+  $('#gp').placeholder = S.gmailSaved ? 'Saved - leave empty to keep it' : 'xxxx xxxx xxxx xxxx';
+  $('#cu').placeholder = S.calendarSaved ? 'Saved - leave empty to keep it' : 'https://calendar.google.com/calendar/ical/…';
+  $('#startup').checked = S.startup; $('#startup').disabled = !S.installed;
+  $('#ver').textContent = `Desk Buddy ${S.version}${S.installed ? '' : ' (development copy)'}`;
+  const robotSrc = `/?demo&name=${encodeURIComponent(b.name)}&personality=${b.personality}&level=${b.level}`;
+  $$('iframe.robot').forEach(f => { if (!f.src.endsWith(robotSrc)) f.src = robotSrc; });
+  renderLive();
+}
+function renderLive() {
+  const on = S.phones > 0;
+  $('#hello').textContent = `Hi! ${S.buddy.name} is ${on ? 'on your phone 👋' : 'waiting for your phone'}`;
+  $('#sideDot').className = 'dot' + (on ? ' on' : '');
+  $('#sideStatus').textContent = on ? 'Phone connected' : 'No phone connected';
+  $('#cPhone').textContent = on ? '✓ Connected' : 'Not connected';
+  $('#cLevel').textContent = `💙 Level ${S.buddy.level}`;
+  const acct = [S.gmail.includes('✓') && 'Gmail', S.calendar.includes('✓') && 'Calendar'].filter(Boolean);
+  $('#cAcct').textContent = acct.length ? acct.join(' + ') : 'Not set up';
+  for (const [sel, txt] of [['#sGmail', S.gmail], ['#sCal', S.calendar]]) { $(sel).textContent = txt; $(sel).className = 'status' + (txt.includes('✓') ? ' ok' : ''); }
+  for (const id of ['#phoneWait', '#wWait']) {
+    $(id).textContent = on ? `✓ Connected! ${S.buddy.name} is on your phone.` : 'Waiting for your phone…';
+    $(id).className = 'waiting' + (on ? ' ok' : '');
+  }
+  $('#wPhoneNext').disabled = !on;
+}
+
+// ---------- pages ----------
+function route() {
+  const page = (location.hash || '#home').slice(1);
+  if (page === 'welcome') { showWelcome(); return; }
+  $$('section.page').forEach(s => s.classList.toggle('on', s.id === 'p-' + page));
+  $$('nav a').forEach(a => a.classList.toggle('on', a.hash === '#' + page));
+  if (!$('section.page.on')) location.hash = '#home';
+}
+addEventListener('hashchange', route);
+
+// ---------- welcome tour ----------
+let step = 0, afterTour = 'home';
+function showWelcome() { $('#welcome').classList.add('on'); goStep(0); }
+function goStep(n) {
+  step = n;
+  $$('.wstep').forEach(s => s.classList.toggle('on', +s.dataset.step === n));
+  $$('#pips i').forEach((p, i) => p.classList.toggle('on', i <= n));
+}
+$('#welcome').addEventListener('click', e => {
+  const b = e.target.closest('[data-next]');
+  if (!b || b.disabled) return;
+  if (b.dataset.then) afterTour = b.dataset.then;
+  goStep(step + 1);
+});
+$('#wDone').addEventListener('click', async () => {
+  await api('onboarded');
+  $('#welcome').classList.remove('on');
+  location.hash = '#' + afterTour; route();
+});
+$('#replay').addEventListener('click', () => { afterTour = 'home'; location.hash = '#welcome'; });
+
+// ---------- controls ----------
+document.addEventListener('change', async e => {
+  const k = e.target.dataset.pref;
+  if (k) { S.prefs[k] = e.target.checked; await api('prefs', { [k]: e.target.checked }); renderAll(); }
+});
+document.addEventListener('click', async e => {
+  const s = e.target.closest('[data-sound]'), pers = e.target.closest('[data-pers]'), test = e.target.closest('[data-test]');
+  if (s) { S.prefs.soundOutput = s.dataset.sound; renderAll(); await api('prefs', { soundOutput: s.dataset.sound }); }
+  if (pers && pers.dataset.pers !== S.buddy.personality) { await api('buddy', { personality: pers.dataset.pers }); await load(); }
+  if (test) api('test-sound', { where: test.dataset.test });
+});
+$('#breakMinutes').addEventListener('input', e => $('#breakVal').textContent = e.target.value);
+$('#breakMinutes').addEventListener('change', e => api('prefs', { breakMinutes: +e.target.value }));
+$('#volume').addEventListener('input', e => $('#volVal').textContent = e.target.value + '%');
+$('#volume').addEventListener('change', e => { S.prefs.volume = +e.target.value; api('prefs', { volume: +e.target.value }); });
+$('#saveName').addEventListener('click', async () => { await api('buddy', { name: $('#name').value }); await load(); });
+$('#resetBond').addEventListener('click', async () => {
+  if (confirm(`Start your friendship with ${S.buddy.name} over from level 1?`)) { await api('buddy', { reset: true }); await load(); }
+});
+$('#saveGmail').addEventListener('click', async () => { await api('accounts', { gmail_user: $('#gu').value, gmail_password: $('#gp').value }); $('#gp').value = ''; load(); });
+$('#forgetGmail').addEventListener('click', async () => { await api('accounts', { action: 'forget_gmail' }); load(); });
+$('#saveCal').addEventListener('click', async () => { const r = await api('accounts', { calendar_url: $('#cu').value }); if (r.ok) $('#cu').value = ''; load(); });
+$('#forgetCal').addEventListener('click', async () => { await api('accounts', { action: 'forget_calendar' }); load(); });
+$('#startup').addEventListener('change', e => api('startup', { on: e.target.checked }));
+$('#uninstall').addEventListener('click', () => {
+  if (confirm('Remove Desk Buddy from this PC? Your settings and friendship progress will be deleted.')) api('uninstall');
+});
+
+// ---------- data ----------
+async function load() {
+  S = await fetch('/api/state').then(r => r.json());
+  renderAll();
+}
+setInterval(async () => {
+  if (!S) return;
+  try { Object.assign(S, await fetch('/status').then(r => r.json())); renderLive(); } catch (e) {}
+}, 1500);
+load().then(() => {
+  if (!S.onboarded || location.hash === '#welcome') showWelcome();
+  if (location.hash === '#welcome') history.replaceState(null, '', '#home');
+  route();
+});
+</script>
+</body>
+</html>

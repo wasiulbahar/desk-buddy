@@ -8,6 +8,7 @@ During development:  python deskbuddy.py
 
 Windows only (reads PC activity through the Win32 API via ctypes).
 """
+import array
 import base64
 import ctypes
 import datetime
@@ -16,6 +17,7 @@ import html
 import imaplib
 import io
 import json
+import math
 import os
 import random
 import shutil
@@ -127,7 +129,7 @@ def cursor_position():
 
 
 stats = {"cpu": 0, "ram": 0, "idle": 0, "title": "", "work": 0, "audio": 0,
-         "media": None, "mail": None, "calendar": None, "buddy": None}
+         "media": None, "mail": None, "calendar": None, "buddy": None, "prefs": None, "ping": 0}
 
 
 # ---------- saved files: settings (secrets encrypted by Windows) and friendship ----------
@@ -176,7 +178,35 @@ def unprotect(b64):
         return ""
 
 
-config = load_json(CONFIG_FILE, {"gmail_user": "", "gmail_password": "", "calendar_url": ""})
+config = load_json(CONFIG_FILE, {"gmail_user": "", "gmail_password": "", "calendar_url": "", "onboarded": False})
+
+# Everything the dashboard can switch on and off. Sent to the phone, so changes apply instantly.
+DEFAULT_PREFS = {
+    "music": True, "reading": True, "meeting": True, "suspicious": True, "stress": True, "quirks": True,
+    "breaks": True, "breakMinutes": 50, "bedtime": True, "mailAlerts": True, "calendarAlerts": True,
+    "soundOutput": "phone", "volume": 80, "cheeky": 0, "sensors": True, "mic": True,
+}
+PREF_CHOICES = {"soundOutput": ("phone", "pc", "both", "off")}
+PREF_RANGES = {"breakMinutes": (10, 180), "volume": (0, 100), "cheeky": (0, 3)}
+prefs = {**DEFAULT_PREFS, **config.get("prefs", {})}
+
+
+def update_prefs(changes):
+    for key, value in changes.items():
+        if key not in DEFAULT_PREFS:
+            continue
+        default = DEFAULT_PREFS[key]
+        if isinstance(default, bool):
+            value = bool(value)
+        elif key in PREF_RANGES:
+            low, high = PREF_RANGES[key]
+            value = max(low, min(high, int(value)))
+        elif value not in PREF_CHOICES.get(key, ()):
+            continue
+        prefs[key] = value
+    config["prefs"] = prefs
+    save_json(CONFIG_FILE, config)
+    stats["prefs"] = dict(prefs)
 services = {"gmail": "Not set up", "calendar": "Not set up"}   # status lines for the settings page
 wake_mail, wake_calendar = threading.Event(), threading.Event()
 
@@ -193,6 +223,7 @@ if buddy.get("personality") not in PERSONALITIES:   # first run: a brand-new bud
              "met": datetime.date.today().isoformat(), "lastDay": "", "awayDays": 0, "todayDate": "", "today": {}}
     save_json(BUDDY_FILE, buddy)
 bond_lock = threading.Lock()
+stats["prefs"] = dict(prefs)
 
 
 def add_points(kind):
@@ -351,6 +382,111 @@ def calendar_loop():
         wake_calendar.clear()
 
 
+# ---------- the buddy's voice through the PC speakers ----------
+# The phone composes every sound as a short list of notes and noise bursts. When sound is set to
+# "PC", it sends that list here and we synthesise the very same sound, so both outputs match.
+
+SAMPLE_RATE = 24000
+_voices, _voice_lock, _stream = [], threading.Lock(), None
+
+
+def _osc(kind, phase):
+    x = phase % 1.0
+    if kind == "triangle":
+        return 1 - 4 * abs(x - 0.5)
+    if kind == "sawtooth":
+        return 2 * x - 1
+    if kind == "square":
+        return 1.0 if x < 0.5 else -1.0
+    return math.sin(2 * math.pi * x)
+
+
+def render_sound(events, volume):
+    """Turn the phone's note list into samples (mirrors the Web Audio code in face.html)."""
+    events = [e for e in events[:40] if isinstance(e, dict)]
+    if not events:
+        return []
+    end = min(3.0, max(float(e.get("delay", 0)) + float(e.get("dur", 0)) for e in events) + 0.06)
+    out = [0.0] * int(end * SAMPLE_RATE)
+    for e in events:
+        dur = min(max(float(e.get("dur", 0.1)), 0.01), 2.0)
+        vol = min(max(float(e.get("vol", 0.1)), 0.0001), 0.5)
+        start = int(float(e.get("delay", 0)) * SAMPLE_RATE)
+        count = min(int(dur * SAMPLE_RATE), len(out) - start)
+        attack = min(0.03, dur / 3)
+        if e.get("k") == "noise":
+            freq = min(float(e.get("freq", 1000)), SAMPLE_RATE / 2.2)
+            w0 = 2 * math.pi * freq / SAMPLE_RATE
+            alpha = math.sin(w0) / 2
+            b0, b2, a0, a1, a2 = alpha, -alpha, 1 + alpha, -2 * math.cos(w0), 1 - alpha
+            x1 = x2 = y1 = y2 = 0.0
+            for i in range(max(count, 0)):
+                x = random.uniform(-1, 1)
+                y = (b0 * x + b2 * x2 - a1 * y1 - a2 * y2) / a0   # band-pass filtered noise
+                x2, x1, y2, y1 = x1, x, y1, y
+                out[start + i] += y * vol * (0.0001 / vol) ** (i / count)
+            continue
+        f0 = min(max(float(e.get("f0", 440)), 20), 8000)
+        f1 = min(max(float(e.get("f1", f0)), 20), 8000)
+        kind, vib, trem = e.get("type", "sine"), float(e.get("vib", 0)), float(e.get("trem", 0))
+        phase = 0.0
+        for i in range(max(count, 0)):
+            t = i / SAMPLE_RATE
+            f = f0 * (f1 / f0) ** (t / dur)
+            if vib:
+                f += f0 * 0.05 * math.sin(2 * math.pi * vib * t)
+            phase += f / SAMPLE_RATE
+            env = 0.0001 * (vol / 0.0001) ** (t / attack) if t < attack else vol * (0.0001 / vol) ** ((t - attack) / (dur - attack))
+            if trem:
+                env += vol * 0.8 * math.sin(2 * math.pi * trem * t)
+            out[start + i] += _osc(kind, phase) * env
+    gain = volume / 100 * 0.9
+    return [s * gain for s in out]
+
+
+def _mix(outdata, frames, _time, _status):
+    import sounddevice
+    mixed = [0.0] * frames
+    with _voice_lock:
+        for voice in _voices:
+            samples, pos = voice
+            chunk = samples[pos:pos + frames]
+            for i, s in enumerate(chunk):
+                mixed[i] += s
+            voice[1] = pos + frames
+        _voices[:] = [v for v in _voices if v[1] < len(v[0])]
+        idle = not _voices
+    pcm = array.array("h", (int(max(-1.0, min(1.0, s)) * 32767) for s in mixed))
+    outdata[:] = pcm.tobytes()
+    if idle:
+        raise sounddevice.CallbackStop   # release the speakers until the next sound
+
+
+def play_on_pc(events):
+    global _stream
+    samples = render_sound(events, prefs["volume"])
+    if not samples:
+        return
+    try:
+        import sounddevice
+        with _voice_lock:
+            _voices.append([samples, 0])
+        if _stream is None:
+            _stream = sounddevice.RawOutputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16",
+                                                  blocksize=1200, callback=_mix)
+        if not _stream.active:
+            try:
+                _stream.stop()
+            except Exception:
+                pass
+            _stream.start()
+    except Exception:
+        pass   # no speakers available: stay silent
+
+CHIRP = [{"k": "tone", "f0": 700, "f1": 1100, "dur": .07, "vol": .12},
+         {"k": "tone", "f0": 900, "f1": 1400, "dur": .09, "vol": .12, "delay": .08}]
+
+
 def audio_loop():
     """How loud the PC's speakers are right now (0..1), so the robot can dance to music."""
     try:
@@ -464,195 +600,104 @@ self.addEventListener('fetch', e => {
 });
 """
 
-PAIR_PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect a phone - Desk Buddy</title>
-<link rel="icon" href="/icon-192.png">
-<style>
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #05080b;
-         color: #d8f9ff; font-family: system-ui, "Segoe UI", sans-serif; }
-  main { text-align: center; padding: 24px; max-width: 520px; }
-  h1 { font-size: 28px; margin: 0 0 6px; color: #5af0ff; }
-  .qr { background: #fff; border-radius: 18px; padding: 18px; width: 280px; height: 280px;
-        margin: 24px auto; box-shadow: 0 0 40px rgba(90,240,255,.35); }
-  .qr svg { width: 100%; height: 100%; }
-  code { font-size: 20px; color: #5af0ff; }
-  #status { margin: 18px 0; font-size: 18px; }
-  .ok { color: #7dff9b; }
-  ol { text-align: left; line-height: 1.7; color: #9fb9c0; }
-</style></head>
-<body><main>
-  <h1>Connect your phone</h1>
-  <div>Scan this with your phone's camera</div>
-  <div class="qr">__QR__</div>
-  <div>or type <code>__URL__</code></div>
-  <div id="status">Waiting for a phone...</div>
-  <ol>
-    <li>Phone and PC must be on the <b>same Wi-Fi</b>.</li>
-    <li>Tap the robot once to make it fullscreen.</li>
-    <li>Optional: in the phone's browser menu, choose <b>Add to Home screen</b>.</li>
-  </ol>
-  <p><a href="/settings" style="color:#5af0ff">Settings: Gmail, Calendar and your buddy →</a></p>
-</main>
-<script>
-  setInterval(async () => {
-    try {
-      const s = await fetch('/status').then(r => r.json());
-      const el = document.getElementById('status');
-      el.textContent = s.phones ? 'Phone connected! You can close this page.' : 'Waiting for a phone...';
-      el.className = s.phones ? 'ok' : '';
-    } catch (e) {}
-  }, 1000);
-</script>
-</body></html>"""
-
-
-def pair_page():
+def qr_svg(text):
     import qrcode
     import qrcode.image.svg
-    url = phone_url()
     buf = io.BytesIO()
-    qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=0).save(buf)
+    qrcode.make(text, image_factory=qrcode.image.svg.SvgPathImage, border=0).save(buf)
     svg = buf.getvalue().decode()
-    svg = svg[svg.index("<svg"):]  # drop the XML header so it can sit inside the page
-    return PAIR_PAGE.replace("__QR__", svg).replace("__URL__", url).encode()
+    return svg[svg.index("<svg"):]  # drop the XML header so it can sit inside the page
 
 
-SETTINGS_PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Settings - Desk Buddy</title>
-<link rel="icon" href="/icon-192.png">
-<style>
-  body { margin: 0; background: #05080b; color: #d8eef2; font-family: system-ui, "Segoe UI", sans-serif; line-height: 1.55; }
-  main { max-width: 640px; margin: 0 auto; padding: 32px 20px 60px; }
-  h1 { color: #5af0ff; margin: 0 0 4px; font-size: 28px; }
-  h2 { font-size: 19px; margin: 0 0 4px; }
-  .muted { color: #8aa3ab; font-size: 14px; }
-  .card { background: #0b1218; border: 1px solid #17252e; border-radius: 16px; padding: 20px; margin-top: 18px; }
-  label { display: block; font-size: 14px; color: #8aa3ab; margin: 14px 0 4px; }
-  input { width: 100%; box-sizing: border-box; font: inherit; color: #d8eef2; background: #05080b;
-          border: 1px solid #23343f; border-radius: 10px; padding: 10px 12px; }
-  input:focus { outline: none; border-color: #5af0ff; }
-  button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 10px 18px; cursor: pointer;
-           background: #5af0ff; color: #00262c; margin-top: 16px; }
-  button.ghost { background: transparent; color: #8aa3ab; border: 1px solid #23343f; margin-left: 8px; }
-  .status { margin-top: 12px; font-size: 14px; padding: 8px 12px; border-radius: 10px; background: #05080b; }
-  .ok { color: #7dff9b; }
-  .bar { height: 8px; border-radius: 4px; background: #17252e; overflow: hidden; margin: 8px 0 4px; }
-  .bar i { display: block; height: 100%; background: #5af0ff; }
-  ol { padding-left: 20px; margin: 8px 0 0; color: #b4c8ce; font-size: 14px; }
-  a { color: #5af0ff; }
-  .saved { background: #10351f; color: #7dff9b; border-radius: 10px; padding: 10px 14px; margin-top: 18px; }
-</style></head>
-<body><main>
-  <h1>Desk Buddy settings</h1>
-  <div class="muted">Only this PC can open this page. Passwords and links are encrypted by Windows and never leave your PC.</div>
-  __SAVED__
-  <form method="post" action="/settings">
-  <div class="card">
-    <h2>Your buddy</h2>
-    <label for="name">Name</label>
-    <input id="name" name="name" maxlength="20" value="__NAME__">
-    <p class="muted" style="margin:12px 0 0">Personality: <b>__PERSONALITY__</b> · Together for <b>__DAYS__</b></p>
-    <div class="bar"><i style="width:__PROGRESS__%"></i></div>
-    <div class="muted">Friendship level <b>__LEVEL__</b> of 5. It grows with days together, petting, and taking your breaks.</div>
-  </div>
+# ---------- the dashboard's API (only answers this PC) ----------
 
-  <div class="card">
-    <h2>📧 Gmail</h2>
-    <div class="muted">Your buddy tells you when new mail arrives (sender and subject only) and shows how many are unread.</div>
-    <ol>
-      <li>Turn on <a href="https://myaccount.google.com/signinoptions/twosv" target="_blank" rel="noopener">2-Step Verification</a> for your Google account, if it isn't already on.</li>
-      <li>Open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App passwords</a>, type <b>Desk Buddy</b> as the name, and click <b>Create</b>.</li>
-      <li>Paste the 16-letter password below. (It only lets Desk Buddy read mail, and you can delete it any time.)</li>
-    </ol>
-    <label for="gu">Gmail address</label>
-    <input id="gu" name="gmail_user" type="email" autocomplete="off" value="__GMAIL_USER__" placeholder="you@gmail.com">
-    <label for="gp">App password</label>
-    <input id="gp" name="gmail_password" type="password" autocomplete="new-password" placeholder="__GMAIL_PW_HINT__">
-    <div class="status" id="gmail">__GMAIL_STATUS__</div>
-  </div>
-
-  <div class="card">
-    <h2>📅 Google Calendar</h2>
-    <div class="muted">Your buddy reminds you 10 minutes before each event and again when it starts.</div>
-    <ol>
-      <li>Open <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener">Google Calendar settings</a>.</li>
-      <li>On the left, click your calendar's name, then scroll to <b>Integrate calendar</b>.</li>
-      <li>Copy <b>Secret address in iCal format</b> and paste it below.</li>
-    </ol>
-    <label for="cu">Secret iCal address</label>
-    <input id="cu" name="calendar_url" type="password" autocomplete="off" placeholder="__CAL_HINT__">
-    <div class="status" id="calendar">__CAL_STATUS__</div>
-  </div>
-
-  <button name="action" value="save">Save</button>
-  <button class="ghost" name="action" value="forget_gmail">Disconnect Gmail</button>
-  <button class="ghost" name="action" value="forget_calendar">Disconnect Calendar</button>
-  </form>
-</main>
-<script>
-  setInterval(async () => {
-    try {
-      const s = await fetch('/status').then(r => r.json());
-      for (const k of ['gmail', 'calendar']) {
-        const el = document.getElementById(k);
-        el.textContent = s[k]; el.className = 'status' + (s[k].includes('✓') ? ' ok' : '');
-      }
-    } catch (e) {}
-  }, 2000);
-</script>
-</body></html>"""
+def live_status():
+    return {"phones": phones, "buddy": buddy_info(), **services}
 
 
-def settings_page(saved=""):
-    info = buddy_info()
-    e = lambda s: html.escape(str(s), quote=True)
-    days = info["days"]
-    return (SETTINGS_PAGE
-            .replace("__SAVED__", f'<div class="saved">{e(saved)}</div>' if saved else "")
-            .replace("__NAME__", e(info["name"]))
-            .replace("__PERSONALITY__", e(PERSONALITIES[info["personality"]]))
-            .replace("__DAYS__", "today" if days == 0 else f"{days} day{'s' if days != 1 else ''}")
-            .replace("__PROGRESS__", str(round((info["level"] - 1 + info["progress"]) / 5 * 100)))
-            .replace("__LEVEL__", str(info["level"]))
-            .replace("__GMAIL_USER__", e(config["gmail_user"]))
-            .replace("__GMAIL_PW_HINT__", "Saved - leave empty to keep it" if config["gmail_password"] else "xxxx xxxx xxxx xxxx")
-            .replace("__GMAIL_STATUS__", e(services["gmail"]))
-            .replace("__CAL_HINT__", "Saved - leave empty to keep it" if config["calendar_url"] else "https://calendar.google.com/calendar/ical/...")
-            .replace("__CAL_STATUS__", e(services["calendar"]))).encode()
+def api_state():
+    url = phone_url()
+    return {
+        **live_status(), "version": VERSION, "installed": FROZEN, "onboarded": config["onboarded"],
+        "personalities": PERSONALITIES, "prefs": prefs, "phoneUrl": url, "qr": qr_svg(url),
+        "gmailUser": config["gmail_user"], "gmailSaved": bool(config["gmail_password"]),
+        "calendarSaved": bool(config["calendar_url"]), "startup": os.path.exists(STARTUP_LNK),
+    }
 
 
-def save_settings(form):
-    action = form.get("action", "save")
+def api_buddy(data):
+    with bond_lock:
+        name = str(data.get("name", "")).strip()[:20]
+        if name:
+            buddy["name"] = name
+        if data.get("personality") in PERSONALITIES:
+            buddy["personality"] = data["personality"]
+        if data.get("reset"):
+            buddy.update(points=0, met=datetime.date.today().isoformat(), todayDate="", today={}, awayDays=0)
+        save_json(BUDDY_FILE, buddy)
+    return "Saved"
+
+
+def api_accounts(data):
+    action = data.get("action", "save")
     if action == "forget_gmail":
         config.update(gmail_user="", gmail_password="")
-        msg = "Gmail disconnected."
+        msg = "Gmail disconnected"
     elif action == "forget_calendar":
         config["calendar_url"] = ""
-        msg = "Calendar disconnected."
+        msg = "Calendar disconnected"
     else:
-        name = form.get("name", "").strip()[:20]
-        if name:
-            with bond_lock:
-                buddy["name"] = name
-                save_json(BUDDY_FILE, buddy)
-        config["gmail_user"] = form.get("gmail_user", "").strip()
-        if form.get("gmail_password", "").strip():
-            config["gmail_password"] = protect(form["gmail_password"].replace(" ", ""))
-        url = form.get("calendar_url", "").strip()
+        url = str(data.get("calendar_url", "")).strip()
+        if url and not url.startswith("https://"):
+            raise ValueError("That calendar address should start with https://")
         if url:
-            if not url.startswith("https://"):
-                return "That calendar address doesn't look right: it should start with https://"
             config["calendar_url"] = protect(url)
-        msg = "Saved! Checking your accounts now…"
+        if "gmail_user" in data:
+            config["gmail_user"] = str(data["gmail_user"]).strip()
+        password = str(data.get("gmail_password", "")).replace(" ", "")
+        if password:
+            config["gmail_password"] = protect(password)
+        msg = "Saved! Checking your accounts…"
     save_json(CONFIG_FILE, config)
     services["gmail"] = services["calendar"] = "Checking…"
     wake_mail.set()
     wake_calendar.set()
     return msg
+
+
+def api_startup(data):
+    if FROZEN:
+        if data.get("on") and not os.path.exists(STARTUP_LNK):
+            make_shortcut(STARTUP_LNK, INSTALLED_EXE, "--startup")
+        elif not data.get("on") and os.path.exists(STARTUP_LNK):
+            os.remove(STARTUP_LNK)
+    return "Saved"
+
+
+def api_test_sound(data):
+    if data.get("where") == "pc":
+        threading.Thread(target=play_on_pc, args=(CHIRP,), daemon=True).start()
+    else:
+        stats["ping"] += 1   # the phone sees this in its stream and chirps
+    return "Playing"
+
+
+def api_onboarded(_data):
+    config["onboarded"] = True
+    save_json(CONFIG_FILE, config)
+    return "Saved"
+
+
+def api_uninstall(_data):
+    if FROZEN:
+        launch_detached([INSTALLED_EXE, "--uninstall"])
+    return "Uninstalling"
+
+
+API = {
+    "prefs": lambda d: (update_prefs(d), "Saved")[1], "buddy": api_buddy, "accounts": api_accounts,
+    "startup": api_startup, "test-sound": api_test_sound, "onboarded": api_onboarded, "uninstall": api_uninstall,
+}
 
 
 # ---------- web server ----------
@@ -694,13 +739,18 @@ class Handler(BaseHTTPRequestHandler):
             # Read on every request so face.html can be tweaked during development with just a refresh.
             with open(os.path.join(RESOURCES, "face.html"), "rb") as f:
                 self.send_body("text/html; charset=utf-8", f.read(), cache=False)
-        elif path == "/pair":
-            self.send_body("text/html; charset=utf-8", pair_page(), cache=False)
+        elif path == "/app" and local:
+            with open(os.path.join(RESOURCES, "dashboard.html"), "rb") as f:
+                self.send_body("text/html; charset=utf-8", f.read(), cache=False)
+        elif path in ("/pair", "/settings") and local:   # old links from earlier versions
+            self.send_response(302)
+            self.send_header("Location", "/app#" + ("phone" if path == "/pair" else "accounts"))
+            self.end_headers()
         elif path == "/status":
-            status = dict(phones=phones, **(services if local else {}))
+            status = live_status() if local else {"phones": phones}
             self.send_body("application/json", json.dumps(status).encode(), cache=False)
-        elif path == "/settings" and local:
-            self.send_body("text/html; charset=utf-8", settings_page(), cache=False)
+        elif path == "/api/state" and local:
+            self.send_body("application/json", json.dumps(api_state()).encode(), cache=False)
         elif path == "/quit" and local:
             # Used by a newer DeskBuddy.exe to replace this one when updating.
             self.send_body("text/plain", b"bye")
@@ -719,16 +769,31 @@ class Handler(BaseHTTPRequestHandler):
             if kind in ("pet", "break"):
                 add_points(kind)
             self.send_body("application/json", json.dumps(buddy_info()).encode(), cache=False)
-        elif path == "/settings" and self.client_address[0] == "127.0.0.1" and self.from_settings_page():
-            form = {k: v[0] for k, v in urllib.parse.parse_qs(body).items()}
-            self.send_body("text/html; charset=utf-8", settings_page(saved=save_settings(form)), cache=False)
+        elif path == "/sound":
+            # The phone asks the PC to make the sound (when sound is set to PC or both).
+            if prefs["soundOutput"] in ("pc", "both"):
+                try:
+                    events = json.loads(body).get("events", [])
+                    threading.Thread(target=play_on_pc, args=(events,), daemon=True).start()
+                except (ValueError, AttributeError):
+                    pass
+            self.send_body("application/json", b"{}", cache=False)
+        elif path.startswith("/api/") and path[5:] in API and self.from_dashboard():
+            try:
+                data = json.loads(body or "{}")
+                result = {"ok": True, "message": API[path[5:]](data if isinstance(data, dict) else {})}
+            except ValueError as e:
+                result = {"ok": False, "message": str(e)}
+            self.send_body("application/json", json.dumps(result).encode(), cache=False)
         else:
             self.send_error(403)
 
-    def from_settings_page(self):
-        """Blocks other websites in your browser from changing settings behind your back."""
-        source = self.headers.get("Origin") or self.headers.get("Referer") or ""
-        return any(source.startswith(f"http://{host}:{PORT}") for host in ("localhost", "127.0.0.1"))
+    def from_dashboard(self):
+        """Only the dashboard on this PC may change settings - not the network, not other websites."""
+        source = self.headers.get("Origin") or ""
+        return (self.client_address[0] == "127.0.0.1"
+                and self.headers.get("Content-Type", "").startswith("application/json")
+                and any(source == f"http://{host}:{PORT}" for host in ("localhost", "127.0.0.1")))
 
     def stream_events(self):
         self.send_response(200)
@@ -757,8 +822,28 @@ def port_in_use():
         return s.connect_ex(("127.0.0.1", PORT)) == 0
 
 
-def open_pair_page():
-    webbrowser.open(f"http://localhost:{PORT}/pair")
+def find_edge():
+    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), os.environ.get("LOCALAPPDATA")):
+        path = os.path.join(base or "", "Microsoft", "Edge", "Application", "msedge.exe")
+        if base and os.path.exists(path):
+            return path
+    return None
+
+
+def open_dashboard(page=""):
+    """Opens the dashboard as its own app window (Edge's app mode: no tabs or address bar)."""
+    url = f"http://localhost:{PORT}/app" + (f"#{page}" if page else "")
+    edge = find_edge()
+    if edge:
+        subprocess.Popen([edge, f"--app={url}", "--window-size=1180,820"], creationflags=NO_WINDOW)
+    else:
+        webbrowser.open(url)
+
+
+def desktop_lnk():
+    buf = ctypes.create_unicode_buffer(260)
+    shell32.SHGetFolderPathW(None, 0x10, None, 0, buf)   # the Desktop folder (even if OneDrive moved it)
+    return os.path.join(buf.value or os.path.join(os.environ["USERPROFILE"], "Desktop"), "Desk Buddy.lnk")
 
 
 # ---------- install / uninstall ----------
@@ -853,16 +938,17 @@ def install():
             break
         except PermissionError:
             time.sleep(0.5)
-    make_shortcut(STARTUP_LNK, INSTALLED_EXE)
-    make_shortcut(START_MENU_LNK, INSTALLED_EXE, "--pair")
+    make_shortcut(STARTUP_LNK, INSTALLED_EXE, "--startup")   # quietly in the tray at every login
+    make_shortcut(START_MENU_LNK, INSTALLED_EXE, "--open")   # these open the dashboard
+    make_shortcut(desktop_lnk(), INSTALLED_EXE, "--open")
     register_in_apps_list()
     allow_through_firewall(INSTALLED_EXE)
-    launch_detached([INSTALLED_EXE, "--pair"])
+    launch_detached([INSTALLED_EXE, "--welcome"])
 
 
 def uninstall():
     stop_running_copy()
-    for lnk in (STARTUP_LNK, START_MENU_LNK):
+    for lnk in (STARTUP_LNK, START_MENU_LNK, desktop_lnk()):
         if os.path.exists(lnk):
             os.remove(lnk)
     try:
@@ -886,19 +972,7 @@ def quit_app():
         os._exit(0)
 
 
-def toggle_startup():
-    if os.path.exists(STARTUP_LNK):
-        os.remove(STARTUP_LNK)
-    else:
-        make_shortcut(STARTUP_LNK, INSTALLED_EXE)
-
-
-def uninstall_from_tray():
-    if user32.MessageBoxW(None, "Remove Desk Buddy from this PC?", APP_NAME, 0x24) == 6:  # Yes
-        launch_detached([INSTALLED_EXE, "--uninstall"])
-
-
-def run_app(show_pair):
+def run_app(args):
     global tray
     Handler.static = {
         "/manifest.webmanifest": ("application/manifest+json", MANIFEST),
@@ -910,8 +984,9 @@ def run_app(show_pair):
         threading.Thread(target=loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    if show_pair:
-        open_pair_page()
+    # At login it starts quietly; the dashboard only opens when asked (or until setup is finished).
+    if "--startup" not in args or not config["onboarded"]:
+        open_dashboard()
 
     try:
         import pystray
@@ -925,12 +1000,9 @@ def run_app(show_pair):
 
     item = pystray.MenuItem
     tray = pystray.Icon("DeskBuddy", robot_image(64, eye_scale=1.5), APP_NAME, pystray.Menu(
-        item("Connect a phone (QR code)", lambda: open_pair_page(), default=True),
-        item("Settings (Gmail, Calendar, buddy)", lambda: webbrowser.open(f"http://localhost:{PORT}/settings")),
-        item("Start with Windows", lambda: toggle_startup(),
-             checked=lambda _: os.path.exists(STARTUP_LNK), visible=FROZEN),
+        item("Open Desk Buddy", lambda: open_dashboard(), default=True),
+        item("Connect a phone", lambda: open_dashboard("phone")),
         pystray.Menu.SEPARATOR,
-        item("Uninstall", lambda: uninstall_from_tray(), visible=FROZEN),
         item("Quit", lambda: quit_app()),
     ))
     tray.run()
@@ -943,9 +1015,10 @@ def main():
     elif FROZEN and os.path.normcase(sys.executable) != os.path.normcase(INSTALLED_EXE):
         install()  # first double-click (or an update): copy into place and start from there
     elif port_in_use():
-        open_pair_page()  # already running - just show how to connect
+        if "--startup" not in args:
+            open_dashboard()  # already running: just bring up the dashboard
     else:
-        run_app(show_pair="--pair" in args or not FROZEN)
+        run_app(args)
 
 
 if __name__ == "__main__":
