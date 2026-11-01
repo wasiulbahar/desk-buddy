@@ -412,7 +412,7 @@ const sfx = {
 
 // ---------- connection to the PC ----------
 let state = { x: 0, y: 0, cpu: 0, ram: 0, idle: 0, title: '', work: 0, audio: 0, media: null, mail: null, calendar: null, buddy: null, prefs: null, ping: 0 };
-let lastPing = null, lastCmd = null, offlineSince = 0;
+let lastPing = null, lastCmd = null, offlineSince = 0, lostSince = 0, lostHelp = false;
 let lastMsg = -1e9, lastMove = -1e9, cpuS = 0, px = 0, py = 0;
 let spin = 0, lastAng = null;                       // for "spin the mouse and it gets dizzy"
 let audioAvg = 0, musicSince = 0, lastBeat = 0;     // for dancing to music
@@ -627,7 +627,7 @@ function onMoodChange(prev, m, now) {
     if (friendship() >= 2) { QUIRKS.wave(); say("You're back! 👋", 2500, false); }
     else { setOverride('surprised', 1500); say("Oh! You're back! 👋", 2500, 'excited'); }
   }
-  else if (m === 'lost') say('Looking for your PC…<br><small>is Desk Buddy running?</small>', 0, 'sad');
+  else if (m === 'lost') { lostSince = now; say('Looking for your PC…<br><small>is Desk Buddy running?</small>', 0, 'sad'); }
   else if (m === 'sleepy') { sfx.yawn(); daySummary(); }
   else if (m === 'gaming' && rateOk('game', 1800000)) { QUIRKS.wave(); say('Game time! 🎮 Good luck!', 2500, 'excited'); }
   else if (m === 'meeting' && rateOk('meet', 600000)) say('🤫 Shh… meeting mode', 2500);
@@ -737,6 +737,12 @@ function think(now) {
   musicOn = kind === 'music' && P('music');   // music is a layer: it keeps going under whatever else is happening
   offlineSince = state.online === false ? (offlineSince || now) : 0;
   if (!connected(now)) m = 'lost';
+  if (m === 'lost' && lostSince && now - lostSince > 20000 && !lostHelp) {   // still nothing: say what usually fixes it
+    lostHelp = true;
+    say("Can't find your PC 🔍<br><small>On a different Wi-Fi? On the PC open <b>Desk Buddy → Phone</b> and scan the code again. "
+      + "Some office and café Wi-Fi keeps devices apart: a USB cable works there.</small>", 0, 'sad');
+  }
+  if (m !== 'lost') { lostSince = 0; lostHelp = false; }
   else if (state.idle > 600 && !kind) m = 'sleeping';
   else if (state.idle > trait().sleepyAfter && !kind) m = 'sleepy';
   else if (P('meeting') && MEET_RE.test(title)) m = 'meeting';

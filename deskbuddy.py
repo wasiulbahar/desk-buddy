@@ -45,7 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import brain
 
 APP_NAME = "Desk Buddy"
-VERSION = "2.4.2"
+VERSION = "2.4.3"
 PORT = int(os.environ.get("DESKBUDDY_PORT", 8765))
 HTTPS_PORT = PORT + 1     # the secure link, needed for the phone's motion sensors and microphone
 FPS = 15                  # how often the phone gets cursor updates
@@ -1128,7 +1128,8 @@ $o = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     $a = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
     $p = Get-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
     [pscustomobject]@{ ip = $_.IPAddress; prefix = $_.PrefixLength; desc = [string]$a.InterfaceDescription;
-                       media = [string]$a.PhysicalMediaType; category = [string]$p.NetworkCategory } }
+                       media = [string]$a.PhysicalMediaType; category = [string]$p.NetworkCategory;
+                       idx = $_.InterfaceIndex; name = [string]$p.Name } }
 ConvertTo-Json -Compress -InputObject @($o)
 """
 
@@ -1145,7 +1146,7 @@ def find_links():
         kind = ("cable" if TETHER_RE.search(desc) else "bluetooth" if "bluetooth" in desc.lower()
                 else "wifi" if re.search(r"wi-?fi|wireless|802\.11|wlan", desc, re.I) else "lan")
         found.append({"ip": d["ip"], "net": str(ipaddress.ip_network(f"{d['ip']}/{d.get('prefix', 24)}", strict=False)),
-                      "kind": kind, "public": d.get("category") == "Public"})
+                      "kind": kind, "public": d.get("category") == "Public", "idx": d.get("idx"), "name": d.get("name") or ""})
     order = {"wifi": 0, "lan": 1, "cable": 2, "bluetooth": 3}
     return sorted(found, key=lambda l: order[l["kind"]])
 
@@ -1155,6 +1156,7 @@ def links_loop():
         try:
             links[:] = find_links()
             stats["links"] = [{"ip": l["ip"], "kind": l["kind"]} for l in links if not blocked_link(l)]
+            check_network()
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         time.sleep(20)
@@ -1184,6 +1186,54 @@ def own_origin(origin):
         return False
     hosts = {l["ip"] for l in links} | {lan_ip(), "localhost", "127.0.0.1"} | {p["ip"] for p in sync_state["peers"].values()}
     return u.scheme in ("http", "https") and u.hostname in hosts and port in (PORT, HTTPS_PORT)
+
+
+# ---------- other Wi-Fi networks ----------
+# On a new network the PC gets a new address, so the phone needs to scan the new code once. Windows
+# also marks most new Wi-Fi as "Public", where Desk Buddy stays closed (cafes, airports). The dashboard
+# says which, and offers to trust the network you're on.
+
+ADDR_FILE = os.path.join(DATA_DIR, "addresses.json")
+net_state = {"public": None, "new": False, "told": set()}
+
+
+def remember_phone_address(ip):
+    """A phone reached the PC at this address: next time on this network it'll just work."""
+    seen = load_json(ADDR_FILE, {})
+    if ip and not ip.startswith("127.") and seen.get(ip, 0) < time.time() - 3600:
+        seen[ip] = time.time()
+        save_json(ADDR_FILE, dict(sorted(seen.items(), key=lambda kv: -kv[1])[:20]))
+
+
+def check_network():
+    """Called after each look at the network: is this Wi-Fi public, or one the phone hasn't seen yet?"""
+    main = next((l for l in links if l["ip"] == lan_ip()), links[0] if links else None)
+    net_state["public"] = ({"name": main.get("name") or "this Wi-Fi", "idx": main.get("idx")}
+                           if main and blocked_link(main) else None)
+    seen = load_json(ADDR_FILE, {})
+    net_state["new"] = bool(main and not main["public"] and seen and main["ip"] not in seen)
+    if not tray:
+        return
+    key = (main or {}).get("ip")
+    if net_state["public"] and ("public", key) not in net_state["told"]:
+        net_state["told"].add(("public", key))
+        tray.notify(f"{net_state['public']['name']} is set as a public network, so your phone can't connect here. "
+                    "Open Desk Buddy to trust it.", APP_NAME)
+    elif net_state["new"] and phones == 0 and ("new", key) not in net_state["told"]:
+        net_state["told"].add(("new", key))
+        tray.notify("New network: scan the code in Desk Buddy > Phone once to connect your phone here.", APP_NAME)
+
+
+def api_network(data):
+    """Trust the Wi-Fi you're on (Windows: set it to a Private network). Windows asks for permission."""
+    p = net_state["public"]
+    if not p or p.get("idx") is None:
+        return "This network is already trusted"
+    if not run_as_admin("powershell", f"-NoProfile -NonInteractive -Command Set-NetConnectionProfile -InterfaceIndex {int(p['idx'])} -NetworkCategory Private"):
+        raise ValueError("Windows didn't allow it, so nothing changed")
+    links[:] = find_links()
+    check_network()
+    return f"Trusted {p['name']}. Your phone can connect now."
 
 def phone_url():
     return f"http://{lan_ip()}:{PORT}"
@@ -1851,7 +1901,8 @@ def live_status():
             "tools": phone_tools["state"] if now - phone_tools["at"] < 5 else None,
             "nowPlaying": {**(stats["mediaKind"] or {}), "playing": bool(media.get("playing"))} if media else None,
             "activity": stats["activity"], "profile": stats["profile"], "profiles": profile_list(), "life": stats["life"],
-            "heart": stats["heart"], "sync": sync_status(), "links": stats["links"]}
+            "heart": stats["heart"], "sync": sync_status(), "links": stats["links"],
+            "network": {"public": net_state["public"], "new": net_state["new"]}}
 
 
 def teach_media(data):
@@ -1977,6 +2028,7 @@ def api_state():
         "syncCode": sync_code_text(), "folders": synced_folders(),
         "errorLog": open(ERROR_LOG, encoding="utf-8", errors="replace").read()[-4000:] if os.path.exists(ERROR_LOG) else "",
         "linkQr": {l["ip"]: qr_svg(f"http://{l['ip']}:{PORT}") for l in stats["links"]},
+        "network": {"public": net_state["public"], "new": net_state["new"]},
     }
 
 
@@ -2062,7 +2114,7 @@ def api_uninstall(_data):
 API = {
     "prefs": lambda d: (update_prefs(d), "Saved")[1], "buddy": api_buddy, "accounts": api_accounts, "sync": api_sync,
     "startup": api_startup, "test-sound": api_test_sound, "onboarded": api_onboarded, "uninstall": api_uninstall,
-    "media": api_media, "tool": api_tool, "profile": api_profile, "life": lambda d: api_life(d),
+    "media": api_media, "tool": api_tool, "profile": api_profile, "life": lambda d: api_life(d), "network": api_network,
 }
 
 
@@ -2240,6 +2292,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         from_peer = "relay=1" in self.path   # another of your PCs passing this on to the phone: never relay back
         phone_connected(+1, notify=not from_peer)
+        if not from_peer:
+            remember_phone_address(self.connection.getsockname()[0])
         try:
             while True:
                 other = None if from_peer else relayed()

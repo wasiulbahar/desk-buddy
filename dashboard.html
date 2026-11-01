@@ -63,6 +63,8 @@
   .links { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 14px; }
   .links .link { background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 12px; width: 190px; text-align: center; font-size: 13px; }
   .links .link .q { background: #fff; border-radius: 10px; padding: 8px; margin-bottom: 8px; }
+  .card.warn { border-color: #ffb36b; background: rgba(255,179,107,.08); }
+  .card.warn h2 { color: #ffd166; }
   .who { display: flex; align-items: center; gap: 8px; margin: 0 8px 14px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line);
          background: var(--bg); color: var(--text); font: inherit; font-size: 14px; text-align: left; }
   .who small { margin-left: auto; color: var(--cyan); font-size: 12px; }
@@ -239,6 +241,7 @@
       </div>
       <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="npScope"> <span id="npScopeText">Remember for everything from this channel</span></label>
     </div>
+    <div class="card warn" id="netWarn" style="display:none"></div>
     <div class="card" id="feelCard" style="display:none">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
         <div><h2>How it feels: <span id="feelLabel">—</span></h2>
@@ -512,11 +515,12 @@
           <li>Phone and PC must be on the <b>same Wi-Fi</b>.</li>
           <li>Tap the robot once to make it fullscreen.</li>
           <li>In your phone browser's menu, choose <b>Add to Home screen</b>. Next time, just tap its icon.</li>
-          <li>If it ever can't find your PC (for example after a router restart), scan this code again.</li>
+          <li>On a different Wi-Fi your PC gets a new address: scan this code there once. Some office and café Wi-Fi keeps devices apart; use a USB cable there (below).</li>
         </ol>
       </div>
     </div>
 
+    <div class="card warn" id="netWarn2" style="display:none"></div>
     <div class="card">
       <h2>🔌 No Wi-Fi? Use a cable or Bluetooth</h2>
       <p class="muted">Desk Buddy also works over your phone's own cable or Bluetooth link. Turn it on once, and the phone switches between Wi-Fi, cable and Bluetooth by itself. A cable keeps the phone charged too.</p>
@@ -963,6 +967,22 @@ $('#saveBday').addEventListener('click', async () => {
   await api('life', { birthday: m && d ? `${m}-${d}` : '' }); setTimeout(load, 800);
 });
 
+// ---------- other Wi-Fi networks ----------
+let netShown = '';
+function renderNetwork() {
+  const n = S.network || {}, key = JSON.stringify(n);
+  if (key === netShown) return;
+  netShown = key;
+  const html = n.public
+    ? `<h2>⚠️ ${esc(n.public.name)} is set as a public network</h2><p class="muted">On public networks (cafés, airports) Desk Buddy keeps your PC closed, so your phone can't connect. If this is a Wi-Fi you trust, like home or work, trust it and your phone can connect. Windows will ask for permission.</p>
+       <button class="btn" data-net="trust">Trust this Wi-Fi</button>`
+    : n.new ? `<h2>📶 New network</h2><p class="muted">Your PC has a new address on this Wi-Fi. Scan the code on the <a class="golink" href="#phone">Phone</a> page once and your phone connects here; back on your other Wi-Fi, the old icon works again.</p>` : '';
+  for (const id of ['#netWarn', '#netWarn2']) { $(id).innerHTML = html; $(id).style.display = html ? '' : 'none'; }
+}
+document.addEventListener('click', async e => {
+  if (e.target.closest('[data-net="trust"]')) { await api('network', {}); netShown = ''; load(); }
+});
+
 // ---------- how it feels, other ways to connect, and sync ----------
 function renderFeel() {
   const h = S.heart;
@@ -1095,7 +1115,7 @@ function renderAll() {
 }
 function renderLive() {
   const on = S.phones > 0;
-  renderTools(); renderNowPlaying(); renderPeople(); renderLife(); renderFeel(); renderSync(); renderLinks();
+  renderTools(); renderNowPlaying(); renderPeople(); renderLife(); renderFeel(); renderSync(); renderLinks(); renderNetwork();
   if (location.hash === '#insights' && Date.now() - insightsAt > 15000) loadInsights();
   $('#hello').textContent = `Hi! ${S.buddy.name} is ${on ? 'on your phone 👋' : 'waiting for your phone'}`;
   $('#sideDot').className = 'dot' + (on ? ' on' : '');
